@@ -1,0 +1,40 @@
+:root{
+  --ink:#17242b; --muted:#5d6b73; --line:#d6dee1; --bg:#f2f5f5; --card:#fff;
+  --brand:#0e4f4b; --brand2:#16706a; --accent:#1c7f77; --hi:#f4b942; --hi-soft:#fff4da;
+  --ok:#1b7f3b; --ok-soft:#dcf2e2; --warn:#a86a10; --warn-soft:#fdf0d5; --bad:#c0392b; --bad-soft:#fbe1de;
+  --sel:#e1f2ef; --radius:8px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{font:15px/1.5 "Segoe UI",Tahoma,Arial,sans-serif;color:var(--ink);background:var(--bg)}
+a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+h1{font-size:22px;margin:0 0 4px;line-height:1.25} h2{font-size:18px;margin:18px 0 8px} h3{font-size:15px;margin:14px 0 6px}
+input,select,textarea{font:inherit;color:inherit;border:1px solid #bfcacd;border-radius:6px;padding:7px 9px;background:#fff;max-width:100%}
+input:focus,select:focus,textarea:focus{outline:2px solid #8fd0c7;border-color:var(--accent)}
+textarea{min-height:70px;resize:vertical;width:100%}
+button,.btn{font:inherit;border:1px solid #b5c2c5;background:#fff;color:var(--ink);border-radius:6px;padding:7px 14px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px;justify-content:center}
+button:hover,.btn:hover{background:#eef3f3;text-decoration:none}
+button.pri,.btn.pri{background:var(--brand2);border-color:var(--brand2);color:#fff} button.pri:hover{background:var(--brand)}
+button.danger{color:var(--bad);border-color:#e6b9b3}
+button.ghost{border-color:transparent;background:transparent}
+button.sm{padding:3px 9px;font-size:13px}
+button:disabled{opacity:.5;cursor:default}
+.muted{color:var(--muted)} .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)}
+.pill{display:inline-block;padding:1px 9px;border-radius:12px;background:#e4ecec;font-size:12px;white-space:nowrap}
+.pill.ok{background:var(--ok-soft);color:var(--ok)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--bad-soft);color:var(--bad)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:16px}
+.hidden{display:none!important}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#20302f;color:#fff;padding:10px 18px;border-radius:8px;z-index:100;max-width:90vw;box-shadow:0 6px 20px rgba(0,0,0,.2)}
+.toast.err{background:#8e2a20}
+.modal-bg{position:fixed;inset:0;background:rgba(20,30,30,.45);display:flex;align-items:flex-start;justify-content:center;z-index:50;overflow:auto;padding:5vh 12px}
+.modal{background:#fff;border-radius:10px;max-width:720px;width:100%;padding:20px 22px;box-shadow:0 10px 40px rgba(0,0,0,.25)}
+.modal.wide{max-width:1000px}
+.modal h2{margin-top:0}
+.modal .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap}
+/* содержимое вопроса */
+.qtext{font-size:17px;line-height:1.55;white-space:normal;word-wrap:break-word}
+.qtext img,.qimg{max-width:100%;max-height:360px;border-radius:6px;border:1px solid var(--line);margin:6px 8px 6px 0;background:#fff}
+.qimgs{display:flex;flex-wrap:wrap;align-items:flex-start}
+.katex{font-size:1.08em}
+.katex-display{margin:.5em 0;overflow-x:auto;overflow-y:hidden}
+@media print{.noprint{display:none!important} body{background:#fff}}
