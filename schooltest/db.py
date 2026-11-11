@@ -6,7 +6,7 @@ import sqlite3
 import threading
 import time
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -163,6 +163,31 @@ CREATE TABLE IF NOT EXISTS uploads (
     created_at REAL
 );
 
+-- учебные годы (1.1): классы принадлежат году, ученик переводится копией с тем же person_id
+CREATE TABLE IF NOT EXISTS years (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    start_date TEXT, end_date TEXT,
+    current INTEGER NOT NULL DEFAULT 0
+);
+
+-- посылки решений задач с кодом (1.1)
+CREATE TABLE IF NOT EXISTS submissions (
+    id INTEGER PRIMARY KEY,
+    attempt_id INTEGER REFERENCES attempts(id) ON DELETE CASCADE,
+    qid TEXT NOT NULL,
+    lang TEXT NOT NULL,
+    code TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    verdict TEXT,
+    frac REAL,
+    details TEXT NOT NULL DEFAULT '{}',
+    created_at REAL NOT NULL,
+    judged_at REAL
+);
+CREATE INDEX IF NOT EXISTS ix_subs_attempt ON submissions(attempt_id, qid);
+CREATE INDEX IF NOT EXISTS ix_subs_status ON submissions(status);
+
 CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY,
     at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -188,6 +213,37 @@ class Database(object):
             if self.conn.execute("SELECT 1 FROM meta WHERE key='schema'").fetchone() is None:
                 self.conn.execute("INSERT INTO meta(key,value) VALUES('schema',?)", (str(SCHEMA_VERSION),))
                 self.conn.execute("INSERT OR IGNORE INTO meta(key,value) VALUES('app','SchoolTest')")
+            self._migrate()
+
+    def _cols(self, table):
+        return [r[1] for r in self.conn.execute("PRAGMA table_info(%s)" % table)]
+
+    def _migrate(self):
+        """Обновление базы прежних версий: недостающие столбцы и учебный год для существующих классов."""
+        add = [("classes", "year_id", "INTEGER REFERENCES years(id)"),
+               ("students", "person_id", "INTEGER"),
+               ("runs", "kind", "TEXT NOT NULL DEFAULT 'test'"),
+               ("attempts", "psy", "TEXT"),
+               ("attempts", "extra", "TEXT NOT NULL DEFAULT '{}'")]
+        for table, col, decl in add:
+            if col not in self._cols(table):
+                self.conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, col, decl))
+        self.conn.execute("CREATE INDEX IF NOT EXISTS ix_classes_year ON classes(year_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS ix_students_person ON students(person_id)")
+        self.conn.execute("UPDATE students SET person_id=id WHERE person_id IS NULL")
+        if self.conn.execute("SELECT COUNT(*) FROM years").fetchone()[0] == 0:
+            y = time.localtime()
+            start = y.tm_year if y.tm_mon >= 8 else y.tm_year - 1
+            self.conn.execute("INSERT INTO years(name,start_date,end_date,current) VALUES(?,?,?,1)",
+                              ("%d/%d" % (start, start + 1), "%d-09-01" % start, "%d-08-31" % (start + 1)))
+        if self.conn.execute("SELECT COUNT(*) FROM years WHERE current=1").fetchone()[0] == 0:
+            self.conn.execute("UPDATE years SET current=1 WHERE id=(SELECT MAX(id) FROM years)")
+        cur = self.conn.execute("SELECT id FROM years WHERE current=1").fetchone()[0]
+        self.conn.execute("UPDATE classes SET year_id=? WHERE year_id IS NULL", (cur,))
+        self.conn.execute("UPDATE meta SET value=? WHERE key='schema'", (str(SCHEMA_VERSION),))
+
+    def current_year(self):
+        return self.val("SELECT id FROM years WHERE current=1") or self.val("SELECT MAX(id) FROM years")
 
     # ------------------------------------------------------------ helpers
     def q(self, sql, args=()):

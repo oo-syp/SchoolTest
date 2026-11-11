@@ -97,3 +97,37 @@ table.likert input{width:18px;height:18px;accent-color:var(--brand2)}
 }
 .fcur{margin:6px 0 10px}
 .tfiles{margin-bottom:10px}
+/* 1.1: задача с кодом */
+.code-st h4,.code-ans h4,.q-code h4{margin:16px 0 6px;font-size:16px}
+.code-st table.lim{border-collapse:collapse;margin:8px 0;font-size:14px}
+.code-st table.lim td{border:1px solid var(--line);padding:5px 12px}
+.code-st table.lim td:first-child{color:var(--muted)}
+.st-txt{line-height:1.55}
+pre.io{background:#f5f7f9;border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin:4px 0;font:14px/1.4 Consolas,"Courier New",monospace;white-space:pre;overflow:auto;max-height:260px;min-height:20px}
+pre.io.err{background:#fff4f2;color:#8a1f11}
+pre.io.src{max-height:420px}
+.ex{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:6px 0}
+.exh{font-weight:600;font-size:13px;display:flex;align-items:center;gap:4px}
+table.subt{font-size:14px;margin:6px 0}
+textarea.code-ed{width:100%;box-sizing:border-box;font:14px/1.45 Consolas,"Courier New",monospace;tab-size:4;white-space:pre;overflow:auto;min-height:260px;background:#fbfcfd}
+.code-ans .bar{margin:6px 0}
+table.subs td,table.subs th{font-size:14px;white-space:nowrap}
+tr.subdet td{background:#fafbfc;white-space:normal}
+.sub-det .grp{margin:6px 0 10px}
+.sub-det .tests{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.tchip{font:12px Consolas,monospace;padding:2px 6px;border-radius:4px;background:var(--ok-soft)}
+.tchip.bad{background:var(--bad-soft)}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:#9a6500}
+.hidden{display:none!important}
+/* 1.1: методики */
+.psy-opts{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}
+.psy-opts.col{flex-direction:column}
+.psy-opt{flex:1;min-width:160px;min-height:56px;padding:14px 18px;font-size:17px;text-align:left;border:2px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;line-height:1.35}
+.psy-opts:not(.col) .psy-opt{text-align:center}
+.psy-opt:hover{border-color:#9cc9c3}
+.psy-opt.on{border-color:var(--accent);background:var(--sel);font-weight:600}
+table.subt,table.subs{border-collapse:collapse;width:100%;background:#fff}
+table.subt th,table.subt td,table.subs th,table.subs td{border-bottom:1px solid var(--line);padding:6px 10px;text-align:left}
+table.subt th,table.subs th{font-size:13px;color:var(--muted);font-weight:600;background:#f6f8f9}
+table.subs td.num,table.subt td.num{text-align:right}
+.subs-box .tw{overflow-x:auto}

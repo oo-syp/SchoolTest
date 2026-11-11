@@ -25,7 +25,7 @@
     box.appendChild(h("div", { class: "bar" }, st, mine));
     box.appendChild(list);
     function load() {
-      var url = "/api/runs?" + (st.value ? "status=" + st.value + "&" : "") + (mine && mine.querySelector("input").checked ? "mine=1" : "");
+      var url = A.yearQ("/api/runs?" + (st.value ? "status=" + st.value + "&" : "") + (mine && mine.querySelector("input").checked ? "mine=1" : ""));
       api("GET", url).then(function (runs) { list.innerHTML = ""; list.appendChild(A.runsTable(runs)); }).catch(A.err);
     }
     st.addEventListener("change", load);
@@ -90,6 +90,9 @@
   }
 
   /* ---------------- наблюдение ---------------- */
+  A.runMonitor = function (pane, R) { return monitor(pane, R); };
+  A.extendRun = function (R) { return extend(R, null); };
+  A.closeRun = function (R) { return closeRun(R); };
   function monitor(pane, R0) {
     var head = h("div");
     var tbl = h("div");
@@ -139,10 +142,11 @@
             if (ok) api("POST", "/api/runs/" + R.id + "/retake", { student_id: s.student_id }).then(load).catch(A.err);
           });
         } }, "↻"));
-        if (s.attempt_id) acts.appendChild(h("a", { class: "btn sm", href: "#/attempt/" + s.attempt_id }, t("Ответы")));
+        if (s.attempt_id) acts.appendChild(R.kind === "psy" ? (s.status === "finished" ? h("a", { class: "btn sm", href: "#/psyres/" + s.attempt_id }, t("Результат")) : null) :
+          h("a", { class: "btn sm", href: "#/attempt/" + s.attempt_id }, t("Ответы")));
         var mark = s.status === "finished" ? (s.pending ? h("span", { class: "pill warn" }, t("на проверке")) : h("span", { class: "mark" }, s.mark || "")) : "";
         var tr = h("tr", { class: s.waiting ? "wait" : null },
-          h("td", { class: "num" }, String(i + 1)), h("td", null, h("a", { href: "#/student/" + s.student_id }, s.name),
+          h("td", { class: "num" }, String(i + 1)), h("td", null, h("a", { href: (R.kind === "psy" ? "#/psystudent/" : "#/student/") + s.student_id }, s.name),
             s.waiting ? h("div", { class: "small warn" }, t("Просит продолжить на другом устройстве")) : null),
           h("td", null, status), h("td", null, prog),
           h("td", { class: "num" }, s.time_left != null ? ST.fmtTime(s.time_left) : ""),
@@ -196,6 +200,18 @@
       draw();
     });
   }
+  function codeSubs(it) {
+    var box = h("div", { class: "answer-box" }, t("Загрузка посылок…"));
+    api("GET", "/api/attempts/" + it.attempt_id + "/subs?qid=" + encodeURIComponent(it.qid)).then(function (items) {
+      box.innerHTML = "";
+      var best = items.filter(function (x) { return x.status === "done"; }).sort(function (a, b) { return (b.frac || 0) - (a.frac || 0) || b.id - a.id; })[0];
+      if (best) box.appendChild(h("div", { class: "muted small" }, ST.tf("Лучшая посылка #{0}: {1}, автопроверка — {2} %", best.id,
+        t(ST.VERDICT[best.verdict] || best.verdict), Math.round((best.frac || 0) * 100))));
+      if (best) box.appendChild(h("pre", { class: "io src" }, best.code));
+      box.appendChild(h("details", null, h("summary", { class: "small" }, ST.tf("Все посылки: {0}", items.length)), ST.subsTable(items, { full: true })));
+    }).catch(function (e) { box.textContent = e.message; });
+    return box;
+  }
   function gradeItem(it, onSaved) {
     var pts = h("input", { type: "number", min: 0, max: it.maxp, step: "0.5", class: "pts" });
     pts.value = it.manual != null ? it.manual : "";
@@ -203,7 +219,7 @@
     com.value = it.comment || "";
     var saved = h("span", { class: "ok small" });
     var ans = it.response || {};
-    var content = it.question.type === "essay" ? h("div", { class: "answer-box" }, ans.text || "—") :
+    var content = it.question.type === "code" ? codeSubs(it) : it.question.type === "essay" ? h("div", { class: "answer-box" }, ans.text || "—") :
       h("div", { class: "answer-box" }, (it.files && it.files.length) ? it.files.map(function (f) {
         return h("button", { class: "sm", onclick: function () { ST.download("/api/uploads/" + f.id); } }, "⬇ " + f.name + " (" + Math.ceil(f.size / 1024) + " КБ)");
       }) : t("Файл не загружен"));
@@ -249,7 +265,13 @@
           got == null ? t("не проверено") : ST.tf("{0} из {1} б.", A.num(got), A.num(it.maxp)));
         var card = h("div", { class: "card" }, h("div", { class: "bar" }, h("b", null, ST.tf("Вопрос {0}", i + 1)),
           h("span", { class: "muted small" }, t(ST.TYPE_NAMES[it.question.type])), h("div", { class: "sp" }), pill),
-          ST.renderQuestion(q, it.response, { readonly: true, review: { correct: A.correctOf(it.question), comment: it.comment } }));
+          ST.renderQuestion(q, it.response, { readonly: true, review: { correct: A.correctOf(it.question), comment: it.comment },
+            fullSubs: true, loadSubs: function (qq) { return api("GET", "/api/attempts/" + D.id + "/subs?qid=" + encodeURIComponent(qq.id)); } }));
+        if (it.question.type === "code") card.appendChild(h("div", { class: "bar" }, h("button", { class: "sm", onclick: function () {
+          api("POST", "/api/runs/" + D.run.id + "/rejudge", { attempt_id: D.id, qid: String(it.question.id) }).then(function (r) {
+            ST.toast(ST.tf("Отправлено на перепроверку: {0}", r.queued)); setTimeout(A.render, 1500);
+          }).catch(A.err);
+        } }, "⟳ " + t("Перепроверить посылки"))));
         if (it.question.type !== "likert" && D.status === "finished") {
           var row = { attempt_id: D.id, qid: String(it.question.id), maxp: it.maxp, manual: it.manual, comment: it.comment,
                       response: it.response, files: it.files, question: it.question, student: it.manual_type ? t("Оценка учителя") : t("Исправить баллы (автопроверка)"), noContent: it.question.type === "essay" || !it.manual_type };

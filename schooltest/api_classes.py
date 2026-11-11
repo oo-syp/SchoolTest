@@ -15,10 +15,27 @@ def _class_out(c):
     return c
 
 
+def year_arg(req, d=None):
+    """Учебный год запроса: явно указанный или текущий."""
+    v = (d or {}).get("year_id") if d else None
+    v = v or req.arg("year_id")
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        v = None
+    if v and db().val("SELECT 1 FROM years WHERE id=?", (v,)):
+        return v
+    return db().current_year()
+
+
 @router.route("GET", "/api/classes")
 def api_classes(req):
     arch = req.arg("archived") == "1"
-    rows = db().q("SELECT * FROM classes WHERE archived=? ORDER BY grade, name", (1 if arch else 0,))
+    if req.arg("year_id") == "all":
+        rows = db().q("SELECT c.*, y.name year_name FROM classes c LEFT JOIN years y ON y.id=c.year_id WHERE c.archived=? "
+                      "ORDER BY y.start_date DESC, c.grade, c.name", (1 if arch else 0,))
+    else:
+        rows = db().q("SELECT * FROM classes WHERE archived=? AND year_id=? ORDER BY grade, name", (1 if arch else 0, year_arg(req)))
     return [_class_out(c) for c in rows]
 
 
@@ -33,7 +50,7 @@ def api_class_add(req):
     d = req.json()
     name = (d.get("name") or "").strip()
     need(name, "Укажите название", 400)
-    cid = db().insert("classes", {"name": name, "grade": d.get("grade") or _grade_of(name)})
+    cid = db().insert("classes", {"name": name, "grade": d.get("grade") or _grade_of(name), "year_id": year_arg(req, d)})
     return {"id": cid}
 
 
@@ -80,9 +97,14 @@ def _norm(s):
 
 
 def upsert_student(cid, last, first, middle="", sg_id=None):
-    """Добавить ученика, если такого (по ФИО или по номеру в SchoolGrade) ещё нет. Возвращает (id, created)."""
+    """Добавить ученика, если такого (по ФИО или по номеру в SchoolGrade) ещё нет. Возвращает (id, created).
+    Поиск — только среди классов того же учебного года: в прошлых годах остаются копии с историей."""
+    year = db().val("SELECT year_id FROM classes WHERE id=?", (cid,))
+    person = None
     if sg_id:
-        r = db().one("SELECT id FROM students WHERE sg_id=?", (sg_id,))
+        r = db().one("SELECT s.id FROM students s JOIN classes c ON c.id=s.class_id WHERE s.sg_id=? AND c.year_id IS ?",
+                     (sg_id, year))
+        person = db().val("SELECT person_id FROM students WHERE sg_id=? ORDER BY id DESC LIMIT 1", (sg_id,))
         if r:
             db().ex("UPDATE students SET class_id=?, last_name=?, first_name=?, middle_name=?, active=1 WHERE id=?",
                     (cid, last, first, middle, r["id"]))
@@ -100,6 +122,7 @@ def upsert_student(cid, last, first, middle="", sg_id=None):
             return r["id"], False
     sid = db().insert("students", {"class_id": cid, "last_name": last, "first_name": first, "middle_name": middle or "",
                                    "sg_id": sg_id})
+    db().ex("UPDATE students SET person_id=? WHERE id=?", (person or sid, sid))
     return sid, True
 
 
@@ -233,7 +256,8 @@ def api_import_students_preview(req):
     else:
         rows = _table_rows(d.get("filename"), b64data(d))
     items = parse_student_table(rows, d.get("default_class"))
-    classes = dict((_norm(c["name"]), c["id"]) for c in db().q("SELECT id, name FROM classes WHERE archived=0"))
+    classes = dict((_norm(c["name"]), c["id"]) for c in db().q("SELECT id, name FROM classes WHERE archived=0 AND year_id=?",
+                                                                 (year_arg(req, d),)))
     for it in items:
         it["class_exists"] = _norm(it["class"]) in classes
         it["exists"] = False
@@ -249,14 +273,15 @@ def api_import_students_commit(req):
     need_admin(req)
     rows = req.json().get("rows") or []
     added = updated = classes_new = 0
-    cache = dict((_norm(c["name"]), c["id"]) for c in db().q("SELECT id, name FROM classes WHERE archived=0"))
+    year = year_arg(req, req.json())
+    cache = dict((_norm(c["name"]), c["id"]) for c in db().q("SELECT id, name FROM classes WHERE archived=0 AND year_id=?", (year,)))
     with db().tx():
         for it in rows:
             if it.get("error") or not it.get("last"):
                 continue
             key = _norm(it["class"])
             if key not in cache:
-                cache[key] = db().insert("classes", {"name": it["class"].strip(), "grade": _grade_of(it["class"])})
+                cache[key] = db().insert("classes", {"name": it["class"].strip(), "grade": _grade_of(it["class"]), "year_id": year})
                 classes_new += 1
             _sid, created = upsert_student(cache[key], it["last"], it.get("first", ""), it.get("middle", ""))
             added += created
@@ -269,16 +294,18 @@ def api_import_students_commit(req):
 def apply_schoolgrade_classes(payload, deactivate_missing=True):
     """payload — {"classes": [{"id", "name", "grade", "students": [{"id", "last_name", ...}]}]}."""
     st = {"classes_new": 0, "classes_updated": 0, "added": 0, "updated": 0, "deactivated": 0}
+    year = db().current_year()
     with db().tx():
         for c in payload.get("classes") or []:
-            row = db().one("SELECT * FROM classes WHERE sg_id=?", (c["id"],)) or \
-                db().one("SELECT * FROM classes WHERE sg_id IS NULL AND lower(name)=? AND archived=0", (_norm(c["name"]),))
+            row = db().one("SELECT * FROM classes WHERE sg_id=? AND year_id=?", (c["id"], year)) or \
+                db().one("SELECT * FROM classes WHERE sg_id IS NULL AND lower(name)=? AND archived=0 AND year_id=?",
+                         (_norm(c["name"]), year))
             if row:
                 db().update("classes", row["id"], {"name": c["name"], "grade": c.get("grade"), "sg_id": c["id"], "archived": 0})
                 cid = row["id"]
                 st["classes_updated"] += 1
             else:
-                cid = db().insert("classes", {"name": c["name"], "grade": c.get("grade"), "sg_id": c["id"]})
+                cid = db().insert("classes", {"name": c["name"], "grade": c.get("grade"), "sg_id": c["id"], "year_id": year})
                 st["classes_new"] += 1
             seen = set()
             for s in c.get("students") or []:

@@ -45,6 +45,22 @@ def regrade(attempt_id):
     snap = snapshot_for(a["run_id"])
     plan = json.loads(a["plan"] or "[]")
     ans = answers_map(attempt_id)
+    if snap.get("psy"):            # психодиагностика: шкалы и интерпретация вместо отметки
+        from . import psy as P
+        resp = {}
+        for qid, row in ans.items():
+            try:
+                resp[qid] = json.loads(row["response"]) if row.get("response") else None
+            except ValueError:
+                resp[qid] = None
+        try:
+            extra = json.loads(a.get("extra") or "{}")
+        except ValueError:
+            extra = {}
+        res = P.score(snap["psy"], resp, extra)
+        db().ex("UPDATE attempts SET psy=?, score=NULL, max_score=NULL, percent=NULL, mark=NULL, pending_manual=0 WHERE id=?",
+                (json.dumps(res, ensure_ascii=False), attempt_id))
+        return db().one("SELECT * FROM attempts WHERE id=?", (attempt_id,))
     ev, autos, _items = E.score_attempt(snap, plan, ans)
     for qid, pts in autos.items():
         if qid in ans:

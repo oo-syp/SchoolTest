@@ -170,6 +170,16 @@ def public_question(q, entry, plays_used=0, scale=None):
         out["task_files"] = b.get("task_files") or []
         out["accept"] = b.get("accept") or ""
         out["max_mb"] = b.get("max_mb") or 10
+    elif t == "code":
+        for k in ("input_format", "output_format", "notes", "examples", "time_limit", "memory", "languages",
+                  "feedback", "max_submissions"):
+            out[k] = b.get(k)
+        a = q.get("answer") or {}
+        out["subtasks"] = [{"name": s.get("name") or "", "points": s.get("points"), "deps": s.get("deps") or [],
+                            "limits": s.get("limits") or "", "tests": len(s.get("tests") or [])} for s in a.get("subtasks") or []]
+        out["manual"] = bool(a.get("manual"))
+    elif t == "psy":
+        out["options"] = [{"id": x["id"], "text": x.get("text", "")} for x in b.get("options", [])]
     return out
 
 
@@ -192,7 +202,7 @@ def score_attempt(snap, plan, answers):
             except ValueError:
                 resp = None
         scored = q["type"] not in G.UNSCORED_TYPES
-        if q["type"] in G.MANUAL_TYPES:
+        if G.is_manual(q):
             got = row.get("manual")
             if got is None and not G.is_answered(q, resp):
                 got = 0.0                    # нет ответа — нечего проверять
@@ -224,7 +234,7 @@ def review_question(q, entry, row, scale):
     pq["correct"] = correct_view(q)
     res = G.check(q, resp)
     pq["frac"] = None if res is None else res["frac"]
-    pq["got"] = (row or {}).get("manual") if q["type"] in G.MANUAL_TYPES else None
+    pq["got"] = (row or {}).get("manual") if G.is_manual(q) else None
     pq["comment"] = (row or {}).get("comment") or ""
     return pq
 

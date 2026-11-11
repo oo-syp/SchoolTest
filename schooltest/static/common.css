@@ -38,3 +38,8 @@ button:disabled{opacity:.5;cursor:default}
 .katex{font-size:1.08em}
 .katex-display{margin:.5em 0;overflow-x:auto;overflow-y:hidden}
 @media print{.noprint{display:none!important} body{background:#fff}}
+/* 1.1: результат методики */
+.psy-sum{font-size:18px;font-weight:600;margin:6px 0 10px}
+.psy-chart{display:flex;flex-wrap:wrap;gap:18px;align-items:center;margin:8px 0 14px}
+.psy-txt h3{font-size:15px;margin:14px 0 4px}
+.psy-txt p{margin:0;line-height:1.5}

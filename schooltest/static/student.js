@@ -87,9 +87,18 @@
       });
     }
     function choose(s) {
-      ST.confirm(t("Это вы?"), s.name, t("Да, начать тест")).then(function (ok) {
+      var ask = info.run.ask || [];
+      var gender = h("select", null, h("option", { value: "" }, "—"), h("option", { value: "m" }, t("мужской")), h("option", { value: "f" }, t("женский")));
+      var age = h("input", { type: "number", min: 6, max: 99, style: { width: "90px" } });
+      var body = ask.length ? h("div", null, h("p", { style: { marginTop: 0 } }, s.name),
+        ask.indexOf("gender") >= 0 ? h("label", { class: "f" }, t("Пол"), gender) : null, h("div", { style: { height: "8px" } }),
+        ask.indexOf("age") >= 0 ? h("label", { class: "f" }, t("Полных лет"), age) : null) : s.name;
+      var conf = ask.length ? ST.modal(t("Это вы?"), body, [{ text: t("Отмена"), value: null }, { text: info.run.psy ? t("Да, начать") : t("Да, начать тест"), value: 1, cls: "pri",
+        check: function () { if ((ask.indexOf("gender") >= 0 && !gender.value) || (ask.indexOf("age") >= 0 && !age.value)) { ST.toast(t("Укажите пол и возраст"), true); return false; } return true; } }]) :
+        ST.confirm(t("Это вы?"), s.name, info.run.psy ? t("Да, начать") : t("Да, начать тест"));
+      conf.then(function (ok) {
         if (!ok) return;
-        api("POST", "/api/s/start", { code: code, student_id: s.id }).then(function (r) {
+        api("POST", "/api/s/start", { code: code, student_id: s.id, extra: ask.length ? { gender: gender.value, age: age.value } : null }).then(function (r) {
           store({ code: code, aid: r.attempt_id });
           if (r.waiting) screenWaiting(r.attempt_id, s.name); else loadState(r.attempt_id);
         }).catch(function (e) { err.textContent = e.message; });
@@ -98,7 +107,7 @@
     q.addEventListener("input", draw);
     draw();
     var run = info.run;
-    var meta = [run.class, ST.tf("вопросов: {0}", run.questions)];
+    var meta = [run.class, ST.tf(run.psy ? "утверждений: {0}" : "вопросов: {0}", run.questions)];
     if (run.time_limit) meta.push(ST.tf("время: {0} мин", run.time_limit));
     app.innerHTML = "";
     app.appendChild(topbar(h("button", { class: "sm", onclick: function () { screenCode(); } }, "← " + t("Другой код"))));
@@ -170,6 +179,8 @@
       case "likert": return Object.keys(r.values || {}).length > 0;
       case "essay": return !!String(r.text || "").trim();
       case "file": return !!r.file_id;
+      case "code": return !!r.subs;
+      case "psy": return r.choice != null && r.choice !== "";
     }
     return false;
   }
@@ -186,7 +197,7 @@
     var head = h("div", { class: "thead" }, h("div", { class: "thead-in" },
       h("div", null, h("div", { class: "ttl" }, S.title), h("div", { class: "stu" }, S.student)),
       h("div", { class: "sp" }), saveEl, timerEl, langs,
-      h("button", { class: "pri", onclick: askFinish }, t("Завершить тест"))));
+      h("button", { class: "pri", onclick: askFinish }, S.psy ? t("Завершить") : t("Завершить тест"))));
     navEl = h("div", { class: "navq", role: "navigation", "aria-label": t("Вопросы") });
     body = h("div");
     app.innerHTML = "";
@@ -199,6 +210,12 @@
 
   function drawNav() {
     navEl.innerHTML = "";
+    if (S.psy) {        // методика: вместо 57–144 кнопок — полоса прогресса
+      navEl.appendChild(h("div", { style: { flex: 1 } },
+        h("div", { class: "muted small" }, ST.tf("Отвечено: {0} из {1}", S.answered.length, S.total)),
+        h("div", { class: "progress" }, h("i", { style: { width: (100 * S.answered.length / S.total) + "%" } }))));
+      return;
+    }
     if (!S.free_nav) {
       navEl.appendChild(h("div", { style: { flex: 1 } },
         h("div", { class: "muted small" }, ST.tf("Вопрос {0} из {1}. Вопросы проходятся по порядку, вернуться к предыдущим нельзя.", cur + 1, S.total)),
@@ -226,9 +243,19 @@
       onChange: function (r) {
         S.responses[q.id] = r;
         markAnswered(q, r);
-        queueSave(q.id, r, q.type === "essay" || q.type === "short" || q.type === "cloze" ? 700 : 0);
+        if (q.type !== "code") queueSave(q.id, r, q.type === "essay" || q.type === "short" || q.type === "cloze" ? 700 : 0);
         updNavBtn(q);
         updFoot(q);
+      },
+      onAutoNext: q.type === "psy" ? function () { if (cur < S.total - 1 && qAt(cur) === q) go(cur + 1); else updFoot(q); } : null,
+      draftKey: S.attempt_id,
+      onSubmit: function (qq, lang, code) { return api("POST", "/api/s/a/" + S.attempt_id + "/submit", { qid: qq.id, lang: lang, code: code }); },
+      loadSubs: function (qq) { return api("GET", "/api/s/a/" + S.attempt_id + "/subs?qid=" + encodeURIComponent(qq.id)); },
+      loadCode: function (sub) {
+        return api("GET", "/api/s/a/" + S.attempt_id + "/subs?qid=" + encodeURIComponent(q.id) + "&code=" + sub.id).then(function (r) {
+          var x = r.items.filter(function (i) { return i.id === sub.id; })[0];
+          return x && x.code != null ? x.code : "";
+        });
       },
       onPlay: function (qq) { return api("POST", "/api/s/a/" + S.attempt_id + "/play", { qid: qq.id }); },
       onUpload: function (qq, f) {
@@ -238,8 +265,13 @@
       }
     });
     var foot = h("div", { class: "qfoot" });
-    var card = h("div", { class: "qcard" },
-      h("div", { class: "qnum" }, h("b", null, ST.tf("Вопрос {0} из {1}", cur + 1, S.total)),
+    if (S.psy) {
+      var answeredAny = S.answered.length > 0;
+      body.appendChild(h("details", { class: "psy-intro", open: !answeredAny || null }, h("summary", null, S.psy.name + " — " + t("инструкция")),
+        h("p", { style: { marginBottom: 0 } }, S.psy.instruction)));
+    }
+    var card = h("div", { class: "qcard" + (q.type === "code" ? " code-wide" : "") },
+      h("div", { class: "qnum" }, h("b", null, ST.tf(S.psy ? "{0} из {1}" : "Вопрос {0} из {1}", cur + 1, S.total)),
         h("span", null, t(ST.TYPE_NAMES[q.type] || ""))),
       el, foot);
     body.appendChild(card);
@@ -248,6 +280,7 @@
   }
 
   function updNavBtn(q) {
+    if (S.psy) { drawNav(); return; }
     if (!S.free_nav) return;
     var b = navEl.children[cur];
     if (b) b.classList.toggle("ans", isAnswered(q.id));
@@ -405,6 +438,8 @@
     }
     var txt = missing.length ? ST.tf("Нет ответа на вопросы: {0}. Завершить тест?", missing.join(", ")) :
       t("После завершения изменить ответы будет нельзя. Завершить тест?");
+    if (S.psy && missing.length) txt = ST.tf("Нет ответа на вопросы: {0}. Ответьте, пожалуйста, на все вопросы — иначе результат будет неточным. Завершить?", missing.join(", "));
+    else if (S.psy) txt = t("Все ответы даны. Завершить?");
     ST.confirm(t("Завершение теста"), txt, t("Завершить")).then(function (ok) {
       if (!ok) return;
       flush().catch(function () {}).then(function () {
@@ -419,8 +454,11 @@
     document.body.classList.remove("nocopy");
     rerender = screenResult;
     var r = S.result || {};
-    var box = h("div", { class: "result" }, h("h1", null, t("Тест завершён")), h("div", { class: "muted" }, S.title + " · " + S.student));
-    if (r.show === "none") {
+    var box = h("div", { class: "result" }, h("h1", null, S.psy ? t("Готово, спасибо!") : t("Тест завершён")), h("div", { class: "muted" }, S.title + " · " + S.student));
+    if (S.psy) {
+      if (r.psy) box.appendChild(h("div", { style: { textAlign: "left", marginTop: "14px" } }, ST.psyResult(r.psy)));
+      else box.appendChild(h("p", null, t("Ответы сохранены. Результаты обсудит с вами педагог-психолог.")));
+    } else if (r.show === "none") {
       box.appendChild(h("p", null, t("Ответы сохранены. Результат сообщит учитель.")));
     } else if (r.pending) {
       box.appendChild(h("p", null, t("Часть ответов проверит учитель. Итоговый результат появится после проверки.")));

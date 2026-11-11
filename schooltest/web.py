@@ -83,3 +83,4 @@ def default_scale():
 def load_modules():
     # регистрация маршрутов
     from . import api_admin, api_classes, api_tests, api_runs, api_student, api_io, sgbridge  # noqa: F401
+    from . import api_years, api_code, api_psy  # noqa: F401

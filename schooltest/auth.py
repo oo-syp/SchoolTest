@@ -8,7 +8,7 @@ import secrets
 import string
 import time
 
-ROLES = {"admin": "Администратор", "teacher": "Учитель"}
+ROLES = {"admin": "Администратор", "teacher": "Учитель", "psychologist": "Педагог-психолог"}
 SESSION_TTL = 12 * 3600
 ITER = 120000
 

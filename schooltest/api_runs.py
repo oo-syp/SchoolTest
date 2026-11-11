@@ -17,6 +17,9 @@ ONLINE_ACTIVE = 90   # секунд без связи — ученик «не н
 def get_run(rid, req):
     r = db().one("SELECT * FROM runs WHERE id=?", (int(rid),))
     need(r, "Не найдено", 404)
+    if r.get("kind") == "psy":       # психологическая служба: все психологи и администратор, учителя — нет
+        need(is_admin(req) or req.user["role"] == "psychologist", "Результаты психодиагностики доступны только педагогу-психологу")
+        return r
     need(r["teacher_id"] == req.user["id"] or is_admin(req))
     return r
 
@@ -51,9 +54,17 @@ def _run_out(r):
 @router.route("GET", "/api/runs")
 def api_runs(req):
     sql, args = "SELECT * FROM runs WHERE 1=1", []
-    if not is_admin(req) or req.arg("mine") == "1":
+    psy_all = req.arg("kind") == "psy" and req.user["role"] == "psychologist"
+    if (not is_admin(req) and not psy_all) or req.arg("mine") == "1":
         sql += " AND teacher_id=?"
         args.append(req.user["id"])
+    if req.arg("kind") == "psy":
+        need(is_admin(req) or req.user["role"] == "psychologist", "Раздел доступен педагогу-психологу")
+    sql += " AND kind=?"
+    args.append("psy" if req.arg("kind") == "psy" else "test")
+    if req.arg("year_id") and req.arg("year_id") != "all":
+        sql += " AND class_id IN (SELECT id FROM classes WHERE year_id=?)"
+        args.append(int(req.arg("year_id")))
     for k in ("test_id", "class_id"):
         if req.arg(k):
             sql += " AND %s=?" % k
@@ -209,7 +220,7 @@ def api_attempt(req, aid):
         items.append({"index": i, "question": q, "order": e.get("o", {}), "task_num": e["t"], "response": _resp(row),
                       "auto": row["auto"] if row else None, "manual": row["manual"] if row else None,
                       "comment": row["comment"] if row else "", "maxp": G.question_points(q, scale),
-                      "manual_type": q["type"] in G.MANUAL_TYPES, "files": files})
+                      "manual_type": G.is_manual(q), "files": files})
     out = dict(a)
     out["plan"] = None
     out["focus_log"] = json.loads(a["focus_log"] or "[]")
@@ -276,7 +287,7 @@ def api_run_check(req, rid):
         ans = A.answers_map(a["id"])
         for e in json.loads(a["plan"] or "[]"):
             q = qs.get(e["q"])
-            if not q or q["type"] not in G.MANUAL_TYPES:
+            if not q or not G.is_manual(q):
                 continue
             row = ans.get(e["q"])
             resp = _resp(row)
@@ -402,7 +413,7 @@ def analysis_report(r):
             s["pts"] += got or 0
             if maxp and (got or 0) >= maxp - 1e-9:
                 s["full"] += 1
-            elif q["type"] not in G.MANUAL_TYPES:
+            elif not G.is_manual(q):
                 txt = _short_resp(q, resp) or "нет ответа"
                 s["wrong"][txt[:120]] += 1
     rows = []
@@ -449,22 +460,28 @@ def api_run_analysis(req, rid):
 
 @router.route("GET", "/api/students/:sid/history")
 def api_student_history(req, sid):
+    """История за все учебные годы: попытки всех копий ученика (тот же person_id)."""
     s = db().one("SELECT * FROM students WHERE id=?", (int(sid),))
     need(s, "Не найдено", 404)
-    sql = ("SELECT a.*, r.title, r.created_at AS run_at, r.teacher_id, r.mode FROM attempts a JOIN runs r ON r.id=a.run_id "
-           "WHERE a.student_id=? AND a.status='finished'")
-    args = [s["id"]]
+    sql = ("SELECT a.*, r.title, r.created_at AS run_at, r.teacher_id, r.mode, c.name AS class_name, y.name AS year_name "
+           "FROM attempts a JOIN runs r ON r.id=a.run_id JOIN students st ON st.id=a.student_id "
+           "LEFT JOIN classes c ON c.id=st.class_id LEFT JOIN years y ON y.id=c.year_id "
+           "WHERE st.person_id=? AND a.status='finished' AND r.kind='test'")
+    args = [s["person_id"] or s["id"]]
     if not is_admin(req):
         sql += " AND r.teacher_id=?"
         args.append(req.user["id"])
     rows = []
     for i, a in enumerate(db().q(sql + " ORDER BY r.created_at", args), 1):
         mark = a["manual_mark"] or a["mark"] or ("на проверке" if a["pending_manual"] else "")
-        rows.append([i, time.strftime("%d.%m.%Y", time.localtime(a["run_at"])), a["title"],
-                     "" if a["paper"] else "%s %%" % _num(a["percent"]), mark, a["num"] if a["num"] > 1 else ""])
+        rows.append([i, a["year_name"] or "", a["class_name"] or "", time.strftime("%d.%m.%Y", time.localtime(a["run_at"])),
+                     a["title"], "" if a["paper"] else "%s %%" % _num(a["percent"]), mark, a["num"] if a["num"] > 1 else ""])
+    classes = db().q("SELECT c.name, y.name AS year FROM students st JOIN classes c ON c.id=st.class_id "
+                     "LEFT JOIN years y ON y.id=c.year_id WHERE st.person_id=? ORDER BY y.start_date", (s["person_id"] or s["id"],))
     rep = {"name": "История", "title": "История тестирования: %s" % fio(s),
-           "subtitle": db().val("SELECT name FROM classes WHERE id=?", (s["class_id"],)) or "",
-           "headers": ["№", "Дата", "Тест", "Процент", "Отметка", "Попытка"], "widths": [5, 12, 50, 10, 12, 9], "rows": rows}
+           "subtitle": "; ".join("%s — %s" % (c["year"] or "", c["name"]) for c in classes),
+           "headers": ["№", "Учебный год", "Класс", "Дата", "Тест", "Процент", "Отметка", "Попытка"],
+           "widths": [5, 12, 10, 12, 44, 10, 12, 9], "rows": rows}
     rep = i18n.report(rep, req.lang)
     if req.arg("format") == "xlsx":
         return FileResponse(xlsx.build([rep]), "История_%s.xlsx" % fio(s).replace(" ", "_"), XLSX_CT)

@@ -238,6 +238,11 @@ def main(argv=None):
         return 1
     srv.start()
     attempts.start_sweeper()
+    try:
+        from . import api_code
+        api_code.queue()          # проверка посылок, оставшихся с прошлого запуска
+    except Exception as e:  # noqa
+        sys.stderr.write("Очередь проверки решений: %s\n" % e)
     threading.Thread(target=backup_loop, args=(app, int(cfg.get("backup_keep", 30))), daemon=True).start()
 
     if args.nogui:

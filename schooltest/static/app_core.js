@@ -33,6 +33,17 @@ var A = window.A = { routes: {}, me: null };
   A.isSchool = function () { return ((A.me && A.me.settings.org_type) || "school") === "school"; };
   A.isEnterprise = function () { return A.me && A.me.settings.org_type === "enterprise"; };
   A.isAdmin = function () { return A.me && A.me.user.role === "admin"; };
+  A.isPsy = function () { return A.me && (A.me.user.role === "psychologist" || A.me.user.role === "admin"); };
+  /* учебный год: выбранный в боковой панели (по умолчанию — текущий) */
+  A.yearId = function () {
+    var v = null;
+    try { v = +localStorage.getItem("st_year"); } catch (e) {}
+    if (v && A.me.years.some(function (y) { return y.id === v; })) return v;
+    return A.me.current_year;
+  };
+  A.year = function () { var id = A.yearId(); return A.me.years.filter(function (y) { return y.id === id; })[0] || {}; };
+  A.isArchiveYear = function () { return A.yearId() !== A.me.current_year; };
+  A.yearQ = function (url) { return url + (url.indexOf("?") >= 0 ? "&" : "?") + "year_id=" + A.yearId(); };
 
   /* ---------------- навигация ---------------- */
   A.route = function (name, fn) { A.routes[name] = fn; };
@@ -64,6 +75,11 @@ var A = window.A = { routes: {}, me: null };
     MAIN.appendChild(h("button", { class: "menu-btn", onclick: function () { SIDE.classList.toggle("open"); } }, "☰ " + t("Меню")));
     var fn = A.routes[r.name] || A.routes.tests;
     var box = h("div");
+    if (A.isArchiveYear() && ["classes", "runs", "psy", "student", "psyres"].indexOf(r.name) >= 0)
+      MAIN.appendChild(h("div", { class: "year-arch" }, ST.tf("Просмотр учебного года {0} (архив). Текущий год выбирается в левой панели.", A.year().name || "")));
+    if (A.isAdmin() && A.updateInfo && A.updateInfo.newer && r.name === "tests")
+      MAIN.appendChild(h("div", { class: "upd-banner" }, ST.tf("Доступна новая версия SchoolTest {0}.", A.updateInfo.latest), " ",
+        h("a", { href: A.updateInfo.url, target: "_blank", rel: "noopener" }, t("Скачать на GitHub"))));
     MAIN.appendChild(box);
     SIDE.classList.remove("open");
     try {
@@ -82,19 +98,26 @@ var A = window.A = { routes: {}, me: null };
     var nav = h("nav", { class: "nav" });
     function link(name, text, hash) {
       nav.appendChild(h("a", { href: hash || "#/" + name, class: cur === name || (name === "tests" && cur === "test") ||
-        (name === "runs" && (cur === "run" || cur === "attempt")) || (name === "classes" && cur === "student") ? "on" : null }, text));
+        (name === "runs" && (cur === "run" || cur === "attempt")) || (name === "classes" && cur === "student") ||
+        (name === "psy" && (cur === "psyrun" || cur === "psyres" || cur === "psymethod" || cur === "psystudent")) ? "on" : null }, text));
     }
     nav.appendChild(h("div", { class: "grp" }, t("Работа")));
     link("tests", t("Тесты"));
     link("runs", t("Проведение и результаты"));
     link("classes", A.N("classes"));
+    if (A.isPsy() && A.isSchool()) {
+      nav.appendChild(h("div", { class: "grp" }, t("Психологическая служба")));
+      link("psy", t("Психодиагностика"));
+    }
     if (A.isAdmin()) {
       nav.appendChild(h("div", { class: "grp" }, t("Администрирование")));
       link("admin", t("Настройки"));
-      link("users", A.N("teachers"));
+      link("users", t("Пользователи"));
+      link("years", t("Учебные годы"));
+      link("compilers", t("Компиляторы"));
       link("backup", t("Резервные копии"));
       link("audit", t("Журнал действий"));
-    }
+    } else link("compilers", t("Компиляторы"));
     if (!A.isAdmin()) link("backup", t("Резервные копии"));
     nav.appendChild(h("div", { class: "grp" }, t("Справка")));
     link("help", t("Как пользоваться"));
@@ -105,6 +128,16 @@ var A = window.A = { routes: {}, me: null };
     SIDE.innerHTML = "";
     SIDE.appendChild(h("div", { class: "brand" }, h("img", { src: "/icon.svg", alt: "" }),
       h("div", null, h("b", null, "SchoolTest"), h("small", null, A.me.settings.school_name || t("Тестирование в локальной сети")))));
+    if (A.me.years.length > 1) {
+      var ysel = h("select", { class: "yearsel", "aria-label": t("Учебный год"), onchange: function () {
+        try { localStorage.setItem("st_year", ysel.value); } catch (e) {}
+        render();
+      } }, A.me.years.slice().reverse().map(function (y) {
+        return h("option", { value: y.id }, y.name + (y.current ? " (" + t("текущий") + ")" : ""));
+      }));
+      ysel.value = String(A.yearId());
+      SIDE.appendChild(h("div", { class: "yearsel-wrap" }, h("div", { class: "muted small" }, t("Учебный год")), ysel));
+    }
     SIDE.appendChild(nav);
     SIDE.appendChild(h("div", { class: "who" },
       h("div", null, A.me.user.full_name || A.me.user.login),
@@ -173,6 +206,10 @@ var A = window.A = { routes: {}, me: null };
       MAIN = h("main", { class: "main" });
       app.appendChild(h("div", { class: "shell" }, SIDE, MAIN));
       render();
+      if (me.user.role === "admin") api("GET", "/api/update_check", null, { timeout: 15000 }).then(function (u) {
+        A.updateInfo = u;
+        if (u && u.newer && parseHash().name === "tests") render();
+      }).catch(function () {});
     }).catch(function (e) {
       if (e.status === 401) showLogin();
       else if (e.status === 403 && /парол/i.test(e.message)) mustChange();

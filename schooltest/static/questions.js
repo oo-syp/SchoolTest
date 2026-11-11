@@ -361,9 +361,233 @@
     if (rv && rv.got != null) body.appendChild(h("div", { class: "rv-box" }, ST.tf("Баллы: {0}", rv.got)));
   };
 
+  /* ---------------- вопрос методики (психодиагностика): крупные кнопки, переход дальше после ответа ---------------- */
+  RENDER.psy = function (q, resp, body, ctx, changed, ro) {
+    var list = h("div", { class: "psy-opts" + (q.options.length > 2 ? " col" : "") });
+    q.options.forEach(function (o) {
+      var b = h("button", { type: "button", class: "psy-opt" + (resp.choice === o.id ? " on" : ""), disabled: ro || null,
+                            "aria-pressed": resp.choice === o.id ? "true" : "false" }, o.text);
+      b.addEventListener("click", function () {
+        resp.choice = o.id;
+        list.querySelectorAll(".psy-opt").forEach(function (x) { x.classList.remove("on"); x.setAttribute("aria-pressed", "false"); });
+        b.classList.add("on");
+        b.setAttribute("aria-pressed", "true");
+        changed();
+        if (ctx.onAutoNext) setTimeout(ctx.onAutoNext, 180);
+      });
+      list.appendChild(b);
+    });
+    body.appendChild(list);
+  };
+
+  /* ---------------- задача с кодом (как на contest.yandex.ru) ---------------- */
+  var LANG_NAMES = { fpc: "Free Pascal", pabc: "PascalABC.NET", py: "Python 3", cpp: "C++ (20)" };
+  var LANG_EXT = { fpc: ".pas,.pp,.dpr,.lpr", pabc: ".pas", py: ".py", cpp: ".cpp,.cc,.cxx,.c,.h" };
+  ST.VERDICT = { OK: "Полное решение", PT: "Частичное решение", WA: "Неправильный ответ", TL: "Превышено ограничение времени",
+    ML: "Превышено ограничение памяти", RE: "Ошибка во время выполнения", CE: "Ошибка компиляции", OL: "Слишком большой вывод",
+    SE: "Ошибка проверяющей системы", NC: "Компилятор не настроен", DEP: "Не проверялась: не пройдены необходимые подзадачи",
+    SENT: "Решение принято на проверку" };
+  ST.verdictClass = function (v) { return v === "OK" ? "ok" : v === "PT" ? "warn" : v === "SENT" ? "" : v ? "bad" : ""; };
+  function pre(text, cls) { return h("pre", { class: "io" + (cls ? " " + cls : "") }, text == null ? "" : String(text)); }
+  function copyBtn(text) {
+    return h("button", { type: "button", class: "sm ghost", title: t("Копировать"), onclick: function () {
+      try { navigator.clipboard.writeText(text); ST.toast(t("Скопировано")); } catch (e) {}
+    } }, "⧉");
+  }
+  ST.codeStatement = function (q) {
+    var box = h("div", { class: "code-st" });
+    var lim = h("table", { class: "lim" }, h("tbody", null,
+      h("tr", null, h("td", null, t("Ограничение времени")), h("td", null, ST.tf("{0} с", String(q.time_limit || 1).replace(".", ",")))),
+      h("tr", null, h("td", null, t("Ограничение памяти")), h("td", null, ST.tf("{0} МБ", q.memory || 256))),
+      h("tr", null, h("td", null, t("Ввод")), h("td", null, t("стандартный ввод или input.txt"))),
+      h("tr", null, h("td", null, t("Вывод")), h("td", null, t("стандартный вывод или output.txt")))));
+    box.appendChild(lim);
+    if (q.input_format) box.appendChild(h("div", null, h("h4", null, t("Формат ввода")), h("div", { class: "st-txt", html: ST.fmt(q.input_format) })));
+    if (q.output_format) box.appendChild(h("div", null, h("h4", null, t("Формат вывода")), h("div", { class: "st-txt", html: ST.fmt(q.output_format) })));
+    if (q.subtasks && q.subtasks.length) {
+      box.appendChild(h("h4", null, t("Система оценки")));
+      box.appendChild(h("table", { class: "t subt" }, h("thead", null, h("tr", null, h("th", null, t("Подзадача")), h("th", null, t("Баллы")),
+        h("th", null, t("Необходимые подзадачи")), h("th", null, t("Ограничения")))),
+        h("tbody", null, q.subtasks.map(function (s, i) {
+          return h("tr", null, h("td", { class: "num" }, String(i + 1) + (s.name && !/^Подзадача/.test(s.name) ? " — " + s.name : "")),
+            h("td", { class: "num" }, String(s.points).replace(".", ",")), h("td", null, (s.deps || []).join(", ") || "–"),
+            h("td", { html: ST.fmt(s.limits || "") }));
+        }))));
+    }
+    if (q.examples && q.examples.length) {
+      box.appendChild(h("h4", null, q.examples.length > 1 ? t("Примеры") : t("Пример")));
+      q.examples.forEach(function (ex) {
+        box.appendChild(h("div", { class: "ex" }, h("div", null, h("div", { class: "exh" }, t("Ввод"), " ", copyBtn(ex.in)), pre(ex.in)),
+          h("div", null, h("div", { class: "exh" }, t("Вывод"), " ", copyBtn(ex.out)), pre(ex.out))));
+      });
+    }
+    if (q.notes) box.appendChild(h("div", null, h("h4", null, t("Примечания")), h("div", { class: "st-txt", html: ST.fmt(q.notes) })));
+    return box;
+  };
+  ST.codeEditor = function (value, opts) {
+    opts = opts || {};
+    var ta = h("textarea", { class: "code-ed", spellcheck: "false", autocomplete: "off", autocapitalize: "off", wrap: "off",
+                             rows: opts.rows || 16, readonly: opts.readonly || null, "aria-label": t("Код программы") });
+    ta.value = value || "";
+    ta.addEventListener("keydown", function (e) {
+      if (e.key === "Tab" && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        var s = ta.selectionStart, en = ta.selectionEnd, v = ta.value;
+        if (e.shiftKey) {
+          var ls = v.lastIndexOf("\n", s - 1) + 1;
+          if (v.substr(ls, 4) === "    ") { ta.value = v.slice(0, ls) + v.slice(ls + 4); ta.setSelectionRange(Math.max(ls, s - 4), Math.max(ls, en - 4)); }
+        } else {
+          ta.value = v.slice(0, s) + "    " + v.slice(en);
+          ta.setSelectionRange(s + 4, s + 4);
+        }
+        ta.dispatchEvent(new Event("input"));
+      } else if (e.key === "Enter" && !e.ctrlKey) {
+        var p = ta.selectionStart, val = ta.value, line = val.slice(val.lastIndexOf("\n", p - 1) + 1, p);
+        var ind = (/^\s*/.exec(line) || [""])[0];
+        if (/[:{]\s*$|\b(begin|do|then|else|repeat|of)\s*$/i.test(line)) ind += "    ";
+        if (ind) {
+          e.preventDefault();
+          ta.value = val.slice(0, p) + "\n" + ind + val.slice(ta.selectionEnd);
+          ta.setSelectionRange(p + 1 + ind.length, p + 1 + ind.length);
+          ta.dispatchEvent(new Event("input"));
+        }
+      } else if (e.key === "Enter" && e.ctrlKey && opts.onCtrlEnter) {
+        e.preventDefault();
+        opts.onCtrlEnter();
+      }
+    });
+    return ta;
+  };
+  ST.subDetails = function (s, full) {
+    var d = s.details || {};
+    var box = h("div", { class: "sub-det" });
+    if (d.compile) box.appendChild(h("div", null, h("b", null, s.verdict === "CE" || s.verdict === "NC" ? t("Ошибка компиляции") : t("Сообщения компилятора")), pre(d.compile)));
+    if (d.fail && !d.groups) box.appendChild(h("div", null, ST.tf("Первый непройденный тест: {0} — {1}", d.fail.test, t(ST.VERDICT[d.fail.status] || d.fail.status))));
+    (d.groups || []).forEach(function (g) {
+      var head = h("div", { class: "grp-h" }, h("b", null, t(g.name)), " ",
+        g.sample ? h("span", { class: "muted small" }, t("(без баллов)")) : h("span", { class: "pill " + (g.got >= g.points && g.points > 0 ? "ok" : g.got > 0 ? "warn" : "bad") },
+          ST.tf("{0} из {1}", String(Math.round(g.got * 100) / 100).replace(".", ","), String(g.points).replace(".", ","))),
+        " ", h("span", { class: ST.verdictClass(g.status) }, g.status === "OK" ? t("пройдена") : t(ST.VERDICT[g.status] || g.status)));
+      var tests = h("div", { class: "tests" }, (g.tests || []).map(function (x) {
+        return h("span", { class: "tchip " + (x.status === "OK" ? "ok" : "bad"), title: t(ST.VERDICT[x.status] || x.status) + " · " + x.time + " с · " +
+          Math.round((x.memory || 0) / 1048576) + " МБ" }, String(x.n) + " " + x.status);
+      }));
+      var gb = h("div", { class: "grp" }, head, tests);
+      (g.tests || []).forEach(function (x) {
+        if ((g.sample || full) && x.status !== "OK" && (x.input != null || x.stderr)) {
+          gb.appendChild(h("details", null, h("summary", { class: "small" }, ST.tf("Тест {0}: подробности", x.n)),
+            x.input != null ? h("div", { class: "ex" }, h("div", null, h("div", { class: "exh" }, t("Ввод")), pre(x.input)),
+              h("div", null, h("div", { class: "exh" }, t("Ожидаемый вывод")), pre(x.expected)),
+              h("div", null, h("div", { class: "exh" }, t("Вывод программы")), pre(x.output))) : null,
+            x.stderr ? pre(x.stderr, "err") : null));
+        }
+      });
+      box.appendChild(gb);
+    });
+    if (d.time != null && s.status === "done") box.appendChild(h("div", { class: "muted small" },
+      ST.tf("Наибольшее время: {0} с, память: {1} МБ", String(Math.round(d.time * 1000) / 1000).replace(".", ","), Math.round((d.memory || 0) / 1048576))));
+    return box;
+  };
+  ST.subsTable = function (items, opts) {
+    opts = opts || {};
+    if (!items.length) return h("div", { class: "muted small" }, t("Посылок пока нет."));
+    var tb = h("tbody");
+    items.forEach(function (s) {
+      var total = s.points_total;
+      var pts = s.frac != null && s.status === "done" ? (total ? String(Math.round(s.frac * total * 100) / 100).replace(".", ",") :
+        Math.round(s.frac * 100) + " %") : "";
+      var vr = s.status !== "done" ? h("span", { class: "muted" }, s.status === "running" ? t("Проверяется…") : t("В очереди…")) :
+        h("span", { class: ST.verdictClass(s.verdict) }, t(ST.VERDICT[s.verdict] || s.verdict_name || s.verdict || ""));
+      var test = s.details && s.details.fail ? String(s.details.fail.test) : "";
+      var row = h("tr", null, h("td", null, new Date(s.created_at * 1000).toLocaleTimeString().slice(0, 8)), h("td", null, "#" + s.id),
+        h("td", null, LANG_NAMES[s.lang] || s.lang_name || s.lang), h("td", null, vr), h("td", { class: "num" }, test), h("td", { class: "num" }, pts),
+        h("td", null, h("button", { type: "button", class: "sm ghost", onclick: function () {
+          det.classList.toggle("hidden");
+          if (!det.firstChild) {
+            det.appendChild(h("td", { colspan: 7 }, ST.subDetails(s, opts.full),
+              s.code != null ? h("details", null, h("summary", { class: "small" }, t("Код посылки")), pre(s.code, "src")) :
+              opts.loadCode ? h("button", { type: "button", class: "sm", onclick: function (e) {
+                var b = e.target;
+                opts.loadCode(s).then(function (code) { b.replaceWith(pre(code, "src")); }).catch(function (er) { ST.toast(er.message, true); });
+              } }, t("Показать код")) : null));
+          }
+        } }, t("отчёт"))));
+      var det = h("tr", { class: "hidden subdet" });
+      tb.appendChild(row);
+      tb.appendChild(det);
+    });
+    return h("div", { class: "tw" }, h("table", { class: "t subs" }, h("thead", null, h("tr", null,
+      [t("Время"), "ID", t("Язык"), t("Вердикт"), t("Тест"), t("Баллы"), ""].map(function (x) { return h("th", null, x); }))), tb));
+  };
+
+  RENDER.code = function (q, resp, body, ctx, changed, ro, rv) {
+    body.appendChild(ST.codeStatement(q));
+    var langs = (q.languages && q.languages.length ? q.languages : ["fpc", "pabc", "py", "cpp"]);
+    var subsBox = h("div", { class: "subs-box" });
+    var poll = null;
+    function loadSubs() {
+      if (!ctx.loadSubs) return;
+      ctx.loadSubs(q).then(function (r) {
+        var items = r.items || r;
+        subsBox.innerHTML = "";
+        if (r.left != null) subsBox.appendChild(h("div", { class: "muted small" }, ST.tf("Осталось посылок: {0}", r.left)));
+        subsBox.appendChild(ST.subsTable(items, { full: !!ctx.fullSubs, loadCode: ctx.loadCode }));
+        clearTimeout(poll);
+        if (items.some(function (s) { return s.status !== "done"; }) && document.body.contains(subsBox)) poll = setTimeout(loadSubs, 1500);
+        if (ctx.onSubs) ctx.onSubs(items);
+      }).catch(function () {});
+    }
+    if (!ro && ctx.onSubmit) {
+      var key = "st_code_" + (ctx.draftKey || "") + "_" + q.id;
+      var saved = {};
+      try { saved = JSON.parse(localStorage.getItem(key) || "{}"); } catch (e) {}
+      var lang = A_select(langs.map(function (l) { return [l, LANG_NAMES[l] || l]; }), saved.lang || langs[0]);
+      var ed = ST.codeEditor(saved.code || "", { onCtrlEnter: function () { send(); } });
+      function store() { try { localStorage.setItem(key, JSON.stringify({ lang: lang.value, code: ed.value })); } catch (e) {} }
+      ed.addEventListener("input", store);
+      lang.addEventListener("change", store);
+      var sendBtn = h("button", { type: "button", class: "pri", onclick: function () { send(); } }, t("Отправить"));
+      var fileBtn = h("button", { type: "button", onclick: function () {
+        ST.pickFiles(LANG_EXT[lang.value] || "").then(function (fs) {
+          if (!fs.length) return;
+          var r = new FileReader();
+          r.onload = function () { ed.value = String(r.result); store(); };
+          r.readAsText(fs[0]);
+        });
+      } }, t("Загрузить из файла"));
+      function send() {
+        if (!ed.value.trim()) { ST.toast(t("Напишите решение"), true); return; }
+        sendBtn.disabled = true;
+        ctx.onSubmit(q, lang.value, ed.value).then(function () {
+          ST.toast(t("Решение отправлено на проверку"));
+          resp.subs = (resp.subs || 0) + 1;
+          if (ctx.onChange) ctx.onChange(copy(resp));
+          loadSubs();
+        }).catch(function (e) { ST.toast(e.message, true); }).then(function () { setTimeout(function () { sendBtn.disabled = false; }, 2500); });
+      }
+      body.appendChild(h("div", { class: "code-ans" }, h("h4", null, t("Ответ")),
+        h("div", { class: "bar" }, h("label", { class: "muted" }, t("Язык") + " ", lang), h("div", { class: "sp" }), fileBtn), ed,
+        h("div", { class: "bar" }, sendBtn, h("span", { class: "muted small" }, t("Ctrl+Enter — отправить. Код сохраняется на этом устройстве.")),
+          q.manual ? h("span", { class: "pill" }, t("Решение также проверит учитель")) : null)));
+    }
+    if (ctx.loadSubs) {
+      body.appendChild(h("h4", null, t("Посылки")));
+      body.appendChild(subsBox);
+      loadSubs();
+    }
+    if (rv && rv.got != null) body.appendChild(h("div", { class: "rv-box" }, ST.tf("Баллы: {0}", rv.got)));
+  };
+  function A_select(options, value) {
+    var s = h("select");
+    options.forEach(function (o) { s.appendChild(h("option", { value: o[0] }, o[1])); });
+    if (value != null) s.value = value;
+    if (!s.value && options.length) s.value = options[0][0];
+    return s;
+  }
+
   ST.TYPE_NAMES = {
     single: "Один верный ответ", multi: "Несколько верных ответов", short: "Короткий ответ", match: "Соответствие",
     order: "Порядок", chrono: "Хронологическая рулетка", cloze: "Пропуски в тексте", likert: "Шкала Ликерта (опрос)",
-    essay: "Развёрнутый ответ", file: "Практическое задание с файлом"
+    essay: "Развёрнутый ответ", file: "Практическое задание с файлом", code: "Код (программирование)", psy: ""
   };
 })();

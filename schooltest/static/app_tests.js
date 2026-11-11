@@ -232,7 +232,7 @@
 
   /* ---------------- запуск теста ---------------- */
   A.startRun = function (testId) {
-    api("GET", "/api/classes").then(function (classes) {
+    api("GET", A.yearQ("/api/classes")).then(function (classes) {
       if (!classes.length) { ST.modal(t("Нет списков"), h("p", null, A.N("no_classes") + ". " + t("Администратор добавляет их в разделе слева."))); return; }
       var cls = A.select([["", "— " + A.N("choose_class") + " —"]].concat(classes.map(function (c) {
         return [c.id, c.name + " (" + c.students + ")"];
@@ -396,6 +396,13 @@
     if (q.type === "likert") { out.statements = b.statements; out.scale = b.scale; }
     if (q.type === "essay") out.min_words = b.min_words;
     if (q.type === "file") { out.task_files = b.task_files; out.accept = b.accept; out.max_mb = b.max_mb; }
+    if (q.type === "code") {
+      ["input_format", "output_format", "notes", "examples", "time_limit", "memory", "languages", "feedback", "max_submissions"].forEach(function (k) { out[k] = b[k]; });
+      var an = q.answer || {};
+      out.subtasks = (an.subtasks || []).map(function (s) { return { name: s.name, points: s.points, deps: s.deps, limits: s.limits, tests: (s.tests || []).length }; });
+      out.manual = !!an.manual;
+    }
+    if (q.type === "psy") out.options = b.options;
     return out;
   };
   A.correctOf = function (q) {

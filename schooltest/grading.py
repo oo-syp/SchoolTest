@@ -18,17 +18,23 @@
 """
 import re
 
-TYPES = ["single", "multi", "short", "match", "order", "chrono", "cloze", "likert", "essay", "file"]
-AUTO_TYPES = {"single", "multi", "short", "match", "order", "chrono", "cloze"}
+TYPES = ["single", "multi", "short", "match", "order", "chrono", "cloze", "likert", "essay", "file", "code", "psy"]
+AUTO_TYPES = {"single", "multi", "short", "match", "order", "chrono", "cloze", "code"}
 MANUAL_TYPES = {"essay", "file"}
-UNSCORED_TYPES = {"likert"}
-PAPER_UNSUPPORTED = {"file"}   # и вопросы со звуком
+UNSCORED_TYPES = {"likert", "psy"}
+PAPER_UNSUPPORTED = {"file", "code", "psy"}   # и вопросы со звуком
+
+
+def is_manual(q):
+    """Проверяет учитель: развёрнутый ответ, файл, задача с кодом в режиме ручной проверки."""
+    return q["type"] in MANUAL_TYPES or (q["type"] == "code" and bool((q.get("answer") or {}).get("manual")))
 
 TYPE_NAMES = {
     "single": "Один верный ответ", "multi": "Несколько верных ответов", "short": "Короткий ответ",
     "match": "Соответствие", "order": "Порядок", "chrono": "Хронологическая рулетка",
     "cloze": "Пропуски в тексте", "likert": "Шкала Ликерта (опрос)", "essay": "Развёрнутый ответ",
-    "file": "Практическое задание с файлом",
+    "file": "Практическое задание с файлом", "code": "Код (программирование)",
+    "psy": "Вопрос методики",
 }
 
 PERCENT_DEFAULT = [[95, 10], [85, 9], [75, 8], [65, 7], [55, 6], [45, 5], [35, 4], [25, 3], [15, 2], [0, 1]]
@@ -133,6 +139,13 @@ def check(q, response):
     r = response or {}
     if t in MANUAL_TYPES or t in UNSCORED_TYPES:
         return None
+    if t == "code":
+        # доля баллов лучшей посылки; подставляется сервером из таблицы посылок (attempts.regrade)
+        if a.get("manual"):
+            return None
+        f = r.get("judged") if isinstance(r, dict) else None
+        f = max(0.0, min(1.0, float(f or 0)))
+        return {"frac": f, "errors": 0 if f >= 1 else 1, "parts": 1}
     if t == "single":
         ok = r.get("choice") is not None and str(r.get("choice")) in [str(x) for x in a.get("correct", [])]
         return {"frac": 1.0 if ok else 0.0, "errors": 0 if ok else 1, "parts": 1}
@@ -219,6 +232,10 @@ def is_answered(q, response):
         return bool(str(r.get("text") or "").strip())
     if t == "file":
         return bool(r.get("file_id"))
+    if t == "code":
+        return bool(r.get("subs"))
+    if t == "psy":
+        return r.get("choice") not in (None, "")
     return False
 
 

@@ -328,9 +328,70 @@ def normalize_question(qtype, body, answer):
         b["accept"] = _txt(body.get("accept"), 200)
         b["max_mb"] = max(1, min(20, int(body.get("max_mb") or 10)))
         a["sample"] = _txt(answer.get("sample"), 20000)
+    elif qtype == "code":
+        b, a = normalize_code(body, answer, b)
+    elif qtype == "psy":
+        b["options"], _ = items(body.get("options"))
     if not b["text"] and qtype not in ("likert",):
         warn.append("Нет текста вопроса")
     return b, a, warn
+
+
+def _tests(src, limit):
+    out = []
+    for t in src or []:
+        if not isinstance(t, dict):
+            continue
+        i, o = str(t.get("in") or ""), str(t.get("out") or "")
+        if not i.strip() and not o.strip():
+            continue
+        out.append({"in": i.replace("\r\n", "\n"), "out": o.replace("\r\n", "\n")})
+    return out[:limit]
+
+
+def normalize_code(body, answer, b):
+    """Задача с кодом: условие и примеры видит ученик, тесты и эталонное решение — только учитель."""
+    from . import judge as J
+    for k, lim in (("input_format", 20000), ("output_format", 20000), ("notes", 20000)):
+        b[k] = _txt(body.get(k), lim)
+    b["examples"] = _tests(body.get("examples"), 20)
+    try:
+        b["time_limit"] = max(0.1, min(20.0, float(str(body.get("time_limit") or 1).replace(",", "."))))
+        b["memory"] = max(16, min(1024, int(body.get("memory") or 256)))
+    except ValueError:
+        raise ApiError(400, "Неверные ограничения времени или памяти")
+    langs = [x for x in body.get("languages") or [] if x in J.LANG_IDS]
+    need(langs, "Разрешите хотя бы один язык программирования", 400)
+    b["languages"] = langs
+    b["feedback"] = body.get("feedback") if body.get("feedback") in ("full", "verdict", "none") else "full"
+    b["max_submissions"] = max(0, min(500, int(body.get("max_submissions") or 0)))
+    a = {"scoring": answer.get("scoring") if answer.get("scoring") in ("subtasks", "tests") else "subtasks",
+         "checker": answer.get("checker") if answer.get("checker") in ("tokens", "lines", "float") else "tokens",
+         "eps": float(answer.get("eps") or 1e-6), "manual": bool(answer.get("manual")),
+         "check_examples": answer.get("check_examples", True) is not False}
+    subs = []
+    for i, st in enumerate(answer.get("subtasks") or [], 1):
+        tests = _tests(st.get("tests"), 300)
+        if not tests:
+            continue
+        try:
+            pts = max(0.0, float(str(st.get("points") or 0).replace(",", ".")))
+        except ValueError:
+            pts = 0.0
+        deps = [int(x) for x in st.get("deps") or [] if str(x).isdigit() and 0 < int(x) < i]
+        subs.append({"name": _txt(st.get("name"), 200), "points": pts, "deps": deps, "tests": tests,
+                     "limits": _txt(st.get("limits"), 500)})
+    a["subtasks"] = subs
+    size = sum(len(t["in"]) + len(t["out"]) for st in subs for t in st["tests"])
+    need(size <= 30 * 1024 * 1024, "Тесты задачи больше 30 МБ — уменьшите их", 413)
+    need(subs or a["manual"] or b["examples"], "Добавьте тесты (или включите ручную проверку)", 400)
+    if subs and not sum(st["points"] for st in subs):
+        for st in subs:
+            st["points"] = round(100.0 / len(subs), 2)
+    sol = answer.get("solution") or {}
+    if sol.get("code") and sol.get("lang") in J.LANG_IDS:
+        a["solution"] = {"lang": sol["lang"], "code": str(sol["code"])[:65536]}
+    return b, a
 
 
 def _question_in(tid, d, qid=None):

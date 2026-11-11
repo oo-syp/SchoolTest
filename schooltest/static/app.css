@@ -134,3 +134,20 @@ tr.wait td{background:var(--hi-soft)!important}
   .menu-btn{display:inline-flex;margin-bottom:10px}
   .main{padding:14px 12px 40px}
 }
+/* 1.1 */
+textarea.mono{font:13px/1.4 Consolas,"Courier New",monospace;white-space:pre;width:100%;box-sizing:border-box}
+.trow{display:grid;grid-template-columns:24px 1fr 1fr auto;gap:8px;align-items:start;margin:6px 0}
+.tlist{max-height:60vh;overflow:auto}
+.strow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line)}
+.langs-chk{display:flex;flex-wrap:wrap;gap:4px 18px}
+.sec details,.sec summary{cursor:pointer}
+.yearsel{width:100%;margin-top:6px}
+.yearsel-wrap{padding:0 12px 10px}
+.year-arch{background:var(--warn-soft);border:1px solid #f0d49a;border-radius:8px;padding:6px 12px;margin-bottom:12px;font-size:14px}
+.upd-banner{background:var(--hi-soft);border:1px solid #b9d6f2;border-radius:8px;padding:8px 14px;margin-bottom:12px}
+.psy-card{display:flex;flex-direction:column;gap:6px}
+.mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.mcard{border:1px solid var(--line);border-radius:10px;padding:14px;background:#fff;display:flex;flex-direction:column;gap:6px}
+.mcard h3{margin:0;font-size:16px}
+.mcard .acts{margin-top:auto;display:flex;gap:6px;flex-wrap:wrap}
+.promo td input[type=text]{width:120px}

@@ -64,9 +64,59 @@ def api_me(req):
     host = req.headers.get("Host") or ""
     port = host.rsplit(":", 1)[1] if ":" in host else "80"
     urls = ["http://%s:%s" % (ip, port) for ip in local_addresses()]
+    u["role_name"] = auth.ROLES.get(u["role"], u["role"])
+    from .api_years import years_list
+    from . import judge as J
     return {"user": u, "urls": urls, "settings": public_settings(), "norms": norms_catalog(), "types": G.TYPE_NAMES,
-            "result_kinds": G.RESULT_KINDS,
-            "about": {"name": APP_NAME, "version": APP_VERSION, "org": APP_ORG, "author": APP_AUTHOR, "city": APP_CITY_YEAR}}
+            "result_kinds": G.RESULT_KINDS, "roles": auth.ROLES,
+            "years": years_list(), "current_year": db().current_year(),
+            "langs": [{"id": x["id"], "name": x["name"]} for x in J.LANGS], "verdicts": J.VERDICTS,
+            "about": {"name": APP_NAME, "version": APP_VERSION, "org": APP_ORG, "author": APP_AUTHOR, "city": APP_CITY_YEAR,
+                      "releases": RELEASES}}
+
+
+RELEASES = {"SchoolTest": "https://github.com/oo-syp/SchoolTest/releases/latest",
+            "SchoolGrade": "https://github.com/oo-syp/SchoolGrade/releases/latest"}
+_UPDATE = {"t": 0, "res": None}
+
+
+def _ver(v):
+    import re
+    return tuple(int(x) for x in re.findall(r"\d+", v or "")[:3]) or (0,)
+
+
+@router.route("GET", "/api/update_check")
+def api_update_check(req):
+    """Проверка новой версии на GitHub (если есть интернет). Результат кешируется на 6 часов."""
+    import json
+    import time
+    if not db().get_setting("update_check", True):
+        return {"enabled": False, "current": APP_VERSION, "url": RELEASES["SchoolTest"]}
+    if _UPDATE["res"] is None or time.time() - _UPDATE["t"] > 6 * 3600 or req.arg("force"):
+        import urllib.request
+        res = {"enabled": True, "current": APP_VERSION, "url": RELEASES["SchoolTest"], "latest": None, "error": None}
+        try:
+            rq = urllib.request.Request("https://api.github.com/repos/oo-syp/SchoolTest/releases/latest",
+                                        headers={"User-Agent": "SchoolTest/" + APP_VERSION, "Accept": "application/vnd.github+json"})
+            with urllib.request.urlopen(rq, timeout=6) as r:
+                info = json.loads(r.read().decode("utf-8"))
+            res["latest"] = (info.get("tag_name") or "").lstrip("vV")
+            res["name"] = info.get("name") or ""
+            res["published"] = (info.get("published_at") or "")[:10]
+            res["url"] = info.get("html_url") or res["url"]
+        except Exception:  # noqa — нет интернета, прокси, нет релизов
+            res["error"] = "Не удалось проверить: нет доступа к GitHub"
+        res["newer"] = bool(res["latest"]) and _ver(res["latest"]) > _ver(APP_VERSION)
+        _UPDATE.update(t=time.time(), res=res)
+    return _UPDATE["res"]
+
+
+@router.route("PUT", "/api/update_check")
+def api_update_check_put(req):
+    need_admin(req)
+    db().set_setting("update_check", bool(req.json().get("enabled")))
+    _UPDATE["res"] = None
+    return {"ok": True}
 
 
 def norms_catalog():
@@ -166,7 +216,7 @@ def api_user_put(req, uid):
     if int(uid) == req.user["id"]:
         d.pop("role", None)
         d.pop("active", None)
-    if d.get("active") in (0, False) or d.get("role") == "teacher":
+    if d.get("active") in (0, False) or d.get("role") in ("teacher", "psychologist"):
         others = db().val("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1 AND id<>?", (int(uid),))
         is_adm = db().val("SELECT role FROM users WHERE id=?", (int(uid),)) == "admin"
         need(not is_adm or others > 0, "Должен остаться хотя бы один администратор", 400)

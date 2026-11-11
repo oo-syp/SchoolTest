@@ -16,7 +16,7 @@
     A.head(box, A.N("classes"), admin ? null : t("Списки ведёт администратор"), acts);
     var wrap = h("div", { class: "grid-cls", style: { display: "grid", gridTemplateColumns: "minmax(200px,260px) 1fr", gap: "16px" } });
     box.appendChild(wrap);
-    return api("GET", "/api/classes").then(function (classes) {
+    return api("GET", A.yearQ("/api/classes")).then(function (classes) {
       var left = h("div", { class: "card", style: { padding: "8px" } });
       var right = h("div");
       wrap.appendChild(left);
@@ -62,7 +62,7 @@
   }
   function addClass() {
     A.prompt(A.N("new_class"), t("Название, например 7«А»"), "", t("Создать")).then(function (v) {
-      if (v) api("POST", "/api/classes", { name: v }).then(function (r) { A.go("#/classes?c=" + r.id); }).catch(A.err);
+      if (v) api("POST", "/api/classes", { name: v, year_id: A.yearId() }).then(function (r) { A.go("#/classes?c=" + r.id); }).catch(A.err);
     });
   }
   function studentForm(s) {
@@ -97,7 +97,7 @@
     ST.pickFiles(".xlsx,.xls,.csv,.txt").then(function (fs) {
       if (!fs.length) return;
       return ST.readFile(fs[0]).then(function (d) {
-        return api("POST", "/api/import/students/preview", { filename: d.name, data: d.data });
+        return api("POST", "/api/import/students/preview", { filename: d.name, data: d.data, year_id: A.yearId() });
       }).then(function (r) {
         var ok = r.rows.filter(function (x) { return !x.error; });
         var body = h("div", null,
@@ -109,7 +109,7 @@
           })));
         return ST.modal(t("Проверьте данные"), body, [{ text: t("Отмена"), value: null }, { text: t("Загрузить"), value: 1, cls: "pri" }], true).then(function (v) {
           if (!v) return;
-          return api("POST", "/api/import/students/commit", { rows: r.rows }).then(function (res) {
+          return api("POST", "/api/import/students/commit", { rows: r.rows, year_id: A.yearId() }).then(function (res) {
             ST.toast(ST.tf("Добавлено: {0}, обновлено: {1}", res.added, res.updated)); A.render();
           });
         });
@@ -201,7 +201,8 @@
     A.head(box, A.N("teachers"), t("Учётные записи для входа в программу"), [h("button", { class: "pri", onclick: addUser }, "＋ " + t("Добавить"))]);
     return api("GET", "/api/users").then(function (us) {
       box.appendChild(A.table([t("ФИО"), t("Логин"), t("Роль"), t("Тестов"), t("Последний вход"), t("Состояние"), ""], us.map(function (u) {
-        return h("tr", null, h("td", null, u.full_name), h("td", null, u.login), h("td", null, u.role === "admin" ? t("администратор") : A.N("teacher").toLowerCase()),
+        return h("tr", null, h("td", null, u.full_name), h("td", null, u.login), h("td", null, u.role === "admin" ? t("администратор") :
+          u.role === "psychologist" ? t("педагог-психолог") : A.N("teacher").toLowerCase()),
           h("td", { class: "num" }, String(u.tests)), h("td", null, u.last_login ? A.date(u.last_login, true) : ""),
           h("td", null, u.active ? (u.must_change ? h("span", { class: "pill warn" }, t("ждёт смены пароля")) : h("span", { class: "pill ok" }, t("активен"))) :
             h("span", { class: "pill" }, t("отключён"))),
@@ -223,7 +224,7 @@
   function userForm(u) {
     var fn = h("input", { type: "text" }); fn.value = u.full_name || "";
     var lg = h("input", { type: "text", disabled: u.id ? true : null }); lg.value = u.login || "";
-    var role = A.select([["teacher", A.N("teacher")], ["admin", t("Администратор")]], u.role || "teacher");
+    var role = A.select([["teacher", A.N("teacher")], ["psychologist", t("Педагог-психолог")], ["admin", t("Администратор")]], u.role || "teacher");
     var act = A.check(t("Может входить"), u.id ? u.active : true);
     return { el: h("div", null, h("div", { class: "form" }, A.field(t("ФИО"), fn, "wide"), A.field(t("Логин"), lg), A.field(t("Роль"), role)), u.id ? act : null),
              val: function () { return { full_name: fn.value.trim(), login: lg.value.trim(), role: role.value, active: act.querySelector("input").checked ? 1 : 0 }; } };
@@ -309,7 +310,10 @@
       [t("Сбой у ученика"), t("Если компьютер ученика завис, он открывает тест на другом устройстве — в наблюдении появится кнопка «Разрешить продолжить». Ответы и таймер сохраняются.")],
       [t("Проверка"), t("Развёрнутые ответы и файлы проверяются на вкладке «Проверка». Итоговая отметка появляется после проверки.")],
       [t("Отчёты"), t("Результаты, анализ вопросов и история ученика выгружаются в Excel и печатаются.")],
-      [t("Бумажный тест"), t("Выберите «На бумаге» при запуске: программа напечатает варианты и ключ, а после проверки вы внесёте отметки.")]];
+      [t("Бумажный тест"), t("Выберите «На бумаге» при запуске: программа напечатает варианты и ключ, а после проверки вы внесёте отметки.")],
+      [t("Задачи с кодом"), t("Тип вопроса «Код»: условие, примеры, подзадачи с баллами и тестами (вручную или из ZIP-архива). Ученик пишет программу на разрешённом языке и отправляет её — проверка идёт сразу на компьютере с SchoolTest. Компиляторы — в разделе «Компиляторы».")],
+      [t("Учебный год"), t("В конце года администратор переводит учащихся: «Учебные годы» → «Перевести на следующий год…». Прошлые годы выбираются в левой панели — там сохраняются классы, тесты и отметки.")],
+      [t("Психодиагностика"), t("Педагог-психолог проводит методики (ДДО, КОС, EPI, карта интересов) по коду, как тест. Подсчёт по ключу, интерпретация, графики и сводка по классу — автоматически; результаты видят только психологи и администратор.")]];
     box.appendChild(h("div", { class: "card" }, h("ol", null, steps.map(function (s) { return h("li", { style: { marginBottom: "10px" } }, h("b", null, s[0] + ". "), s[1]); }))));
     box.appendChild(h("div", { class: "card" }, h("h2", { style: { marginTop: 0 } }, t("Если ученики не могут открыть адрес")),
       h("ul", null, h("li", null, t("Компьютер с SchoolTest и устройства учеников должны быть в одной сети.")),
@@ -320,11 +324,29 @@
 
   A.route("about", function (box) {
     var ab = A.me.about;
+    var upd = h("div", { class: "upd" });
     A.head(box, t("О программе"));
     box.appendChild(h("div", { class: "card", style: { maxWidth: "640px" } },
       h("div", { style: { display: "flex", gap: "16px", alignItems: "center" } }, h("img", { src: "/icon.svg", alt: "", style: { width: "64px" } }),
         h("div", null, h("h1", null, ab.name + " " + ab.version), h("div", { class: "muted" }, t("Тестирование в локальной сети")))),
       h("p", null, t(ab.org)), h("p", null, t("Разработчик:") + " " + t(ab.author)), h("p", { class: "muted" }, ab.city),
+      h("h2", null, t("Обновления")),
+      h("p", null, t("Актуальная версия программы публикуется на GitHub:"), " ",
+        h("a", { href: ab.releases.SchoolTest, target: "_blank", rel: "noopener" }, ab.releases.SchoolTest)),
+      upd,
+      h("p", null, t("Электронный журнал SchoolGrade (связь с SchoolTest: списки классов и отметки):"), " ",
+        h("a", { href: ab.releases.SchoolGrade, target: "_blank", rel: "noopener" }, ab.releases.SchoolGrade)),
       h("p", { class: "muted small" }, t("Формулы отображаются библиотекой KaTeX (лицензия MIT)."))));
+    upd.textContent = t("Проверка обновлений…");
+    api("GET", "/api/update_check", null, { timeout: 15000 }).then(function (u) {
+      upd.innerHTML = "";
+      if (!u.enabled) upd.appendChild(h("span", { class: "muted" }, t("Автоматическая проверка обновлений выключена.")));
+      else if (u.error) upd.appendChild(h("span", { class: "muted" }, t(u.error)));
+      else if (u.newer) upd.appendChild(h("b", null, ST.tf("Доступна новая версия {0}", u.latest) + (u.published ? " (" + u.published + ")" : "") + ". ",
+        h("a", { href: u.url, target: "_blank", rel: "noopener" }, t("Скачать"))));
+      else upd.appendChild(h("span", { class: "ok" }, t("Установлена последняя версия.")));
+      if (A.isAdmin()) upd.appendChild(h("div", { style: { marginTop: "6px" } }, A.check(t("Проверять наличие новой версии автоматически (нужен интернет; данные школы не передаются)"),
+        u.enabled, function (v) { api("PUT", "/api/update_check", { enabled: v }).then(A.render).catch(A.err); })));
+    }).catch(function () { upd.textContent = ""; });
   });
 })();

@@ -13,9 +13,10 @@
     cloze: "Вписать или выбрать слова в тексте",
     likert: "Опрос: согласие по шкале, без оценки",
     essay: "Свободный ответ, проверяет учитель",
-    file: "Ученик загружает файл с решением"
+    file: "Ученик загружает файл с решением",
+    code: "Задача по программированию: автопроверка на тестах"
   };
-  var TYPES = ["single", "multi", "short", "match", "order", "chrono", "cloze", "likert", "essay", "file"];
+  var TYPES = ["single", "multi", "short", "match", "order", "chrono", "cloze", "likert", "essay", "file", "code"];
 
   function normOf(T) {
     var sc = T.settings.scale || {};
@@ -132,7 +133,7 @@
       if (chosen) editQuestion(T, { type: chosen, task_id: taskId, points: defaultPoints(chosen), variant: 0, body: blankBody(chosen), answer: {} });
     });
   }
-  function defaultPoints(ty) { return ty === "likert" ? 0 : (ty === "multi" || ty === "match" || ty === "order" || ty === "chrono" ? 2 : 1); }
+  function defaultPoints(ty) { return ty === "likert" ? 0 : ty === "code" ? 10 : (ty === "multi" || ty === "match" || ty === "order" || ty === "chrono" ? 2 : 1); }
   function blankBody(ty) {
     var b = { text: "", images: [] };
     if (ty === "single" || ty === "multi") b.options = [{ id: "a", text: "" }, { id: "b", text: "" }, { id: "c", text: "" }, { id: "d", text: "" }];
@@ -142,6 +143,7 @@
     if (ty === "chrono") b.events = [{ id: "e1", text: "", date: "" }, { id: "e2", text: "", date: "" }, { id: "e3", text: "", date: "" }];
     if (ty === "likert") { b.statements = [{ id: "s1", text: "" }]; b.scale = ["Полностью не согласен", "Скорее не согласен", "Затрудняюсь ответить", "Скорее согласен", "Полностью согласен"].map(t); }
     if (ty === "file") { b.max_mb = 10; b.accept = ""; b.task_files = []; }
+    if (ty === "code") b = A.blankCode();
     return b;
   }
 
@@ -235,7 +237,7 @@
       } }, "🔊 " + t("Звук")),
       h("button", { type: "button", title: t("Жирный текст: **так**"), onclick: function () { wrapSel(text, "**", "**"); } }, h("b", null, "Ж")),
       q.type === "cloze" ? h("button", { type: "button", onclick: function () { wrapSel(text, "[", "]"); } }, "[ ] " + t("Пропуск")) : null);
-    form.appendChild(A.field(q.type === "cloze" ? t("Текст с пропусками") : t("Текст вопроса"), h("div", null, tb, text)));
+    form.appendChild(A.field(q.type === "cloze" ? t("Текст с пропусками") : q.type === "code" ? t("Условие задачи") : t("Текст вопроса"), h("div", null, tb, text)));
     if (q.type === "cloze") form.appendChild(h("div", { class: "muted small" },
       t("Пропуск — слово в квадратных скобках: «Столица Беларуси — [Минск]». Несколько допустимых ответов — через «;»: [1812;1812 год]. Выбор из списка — через «|», первым верный: [Минск|Брест|Гродно].")));
     form.appendChild(thumbs);
@@ -248,7 +250,8 @@
     form.appendChild(part);
     var TYPE_UI = {
       single: optionsUI, multi: optionsUI, short: shortUI, match: matchUI, order: orderUI, chrono: chronoUI,
-      cloze: function () {}, likert: likertUI, essay: essayUI, file: fileUI
+      cloze: function () {}, likert: likertUI, essay: essayUI, file: fileUI,
+      code: function (box) { A.codeUI(box, b, a, later); }
     };
     TYPE_UI[q.type](part);
 
@@ -535,6 +538,10 @@
         body.min_words = b.min_words || 0; ans.sample = a.sample || "";
       } else if (ty === "file") {
         body.task_files = b.task_files || []; body.accept = b.accept || ""; body.max_mb = b.max_mb || 10; ans.sample = a.sample || "";
+      } else if (ty === "code") {
+        var bc = A.buildCode(b, a, need);
+        Object.keys(bc.body).forEach(function (k) { body[k] = bc.body[k]; });
+        ans = bc.answer;
       }
       return { body: body, answer: ans };
     }

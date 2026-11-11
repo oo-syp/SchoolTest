@@ -58,7 +58,7 @@ def s_join(req):
                    "ORDER BY last_name, first_name", (run["class_id"],))
     cls = db().val("SELECT name FROM classes WHERE id=?", (run["class_id"],)) or ""
     out = {"run": {"title": snap["test"]["title"], "class": cls, "time_limit": st.get("time_limit") or 0,
-                   "questions": len(snap["questions"])},
+                   "questions": len(snap["questions"]), "psy": bool(snap.get("psy")), "ask": st.get("ask") or []},
            "students": [{"id": s["id"], "name": fio(s, False)} for s in studs]}
     extra = [] if req.cookie("st_dev") else [_dev_cookie(secrets.token_urlsafe(24))]
     return out, extra
@@ -106,6 +106,18 @@ def s_start(req):
             aid = db().insert("attempts", {"run_id": run["id"], "student_id": stu["id"], "student_name": fio(stu),
                                            "num": 1, "status": "active", "device": dev})
             db().update("attempts", aid, _new_plan(run, aid))
+        ex = d.get("extra") or {}
+        if isinstance(ex, dict) and ex:
+            clean = {}
+            if ex.get("gender") in ("m", "f"):
+                clean["gender"] = ex["gender"]
+            try:
+                age = int(ex.get("age") or 0)
+                if 5 <= age <= 99:
+                    clean["age"] = age
+            except (TypeError, ValueError):
+                pass
+            db().ex("UPDATE attempts SET extra=? WHERE id=?", (json.dumps(clean), aid))
     return {"attempt_id": aid}, extra
 
 
@@ -131,6 +143,10 @@ def _state(a):
            "total": len(plan), "cur": a["cur"], "free_nav": bool(st.get("free_nav", True)),
            "no_copy": bool(st.get("no_copy")), "track_focus": bool(st.get("track_focus", True)),
            "time_left": max(0, int(a["deadline"] - time.time())) if a["deadline"] and a["status"] == "active" else None}
+    if snap.get("psy"):
+        from . import psy as P
+        m = P.METHODS[snap["psy"]]
+        out["psy"] = {"method": snap["psy"], "name": m["name"], "instruction": m["instruction"]}
     if a["status"] == "active":
         qs = E.qmap(snap)
         ans = A.answers_map(a["id"])
@@ -152,6 +168,8 @@ def _state(a):
             except ValueError:
                 resp = None
             if any(q["id"] == qid for q in out["questions"]):
+                if qid in qs and qs[qid]["type"] == "code" and isinstance(resp, dict):
+                    resp = {"subs": resp.get("subs") or 0}       # баллы — только в списке посылок
                 out["responses"][qid] = resp
             if resp is not None and qid in qs and G.is_answered(qs[qid], resp):
                 out["answered"].append(qid)
@@ -165,6 +183,12 @@ def _result(a, snap, run):
     show = st.get("show_result", "mark")
     res = {"show": show}
     if show == "none":
+        return res
+    if snap.get("psy"):
+        try:
+            res["psy"] = json.loads(a["psy"]) if a.get("psy") else None
+        except ValueError:
+            res["psy"] = None
         return res
     mark = a["manual_mark"] or a["mark"]
     res.update({"mark": mark, "pending": bool(a["pending_manual"]) and not a["manual_mark"],
@@ -212,6 +236,8 @@ def s_answer(req, aid):
     snap = A.snapshot_for(a["run_id"])
     if not snap["test"]["settings"].get("free_nav", True):
         need(idx[0] == a["cur"], "Вопросы проходятся по порядку: вернуться нельзя", 409)
+    qq = E.qmap(snap).get(qid)
+    need(not qq or qq["type"] != "code", "Решение задачи отправляется кнопкой «Отправить»", 400)
     raw = json.dumps(d.get("response"), ensure_ascii=False)
     need(len(raw) <= MAX_RESPONSE, "Слишком большой запрос", 413)
     now = time.time()
