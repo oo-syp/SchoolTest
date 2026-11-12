@@ -180,6 +180,9 @@ def public_question(q, entry, plays_used=0, scale=None):
         out["manual"] = bool(a.get("manual"))
     elif t == "psy":
         out["options"] = [{"id": x["id"], "text": x.get("text", "")} for x in b.get("options", [])]
+        for k in ("multi", "max", "image", "section", "input", "hint"):
+            if b.get(k) is not None:
+                out[k] = b[k]
     return out
 
 

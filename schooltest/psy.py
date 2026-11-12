@@ -6,9 +6,18 @@
   epi  — Личностный опросник Г. Ю. Айзенка (EPI), подростковый вариант, 57 вопросов
   ki144 — Карта интересов А. Е. Голомштока (модификация А. А. Азабель, А. Г. Грецова), 144 вопроса
 
+Версия 1.2 — в psy_more.py, psy_socio.py и psy_shtur.py:
+  bd    — опросник уровня агрессивности Басса — Дарки, 75 утверждений
+  bai   — шкала тревоги А. Бека, 21 пункт
+  mot   — мотивация учения и эмоциональное отношение к учению (Спилбергер — Андреева — Прихожан), 40 пунктов
+  tsr   — анкета «Учитель — Ученик» (модификация Т. Н. Клюевой), 24 утверждения
+  socio — социометрия: выбор одноклассников по критериям, социоматрица и индексы (групповая методика)
+  shtur — ШТУР-2, школьный тест умственного развития, 129 заданий в 8 субтестах, формы А и Б
+
 Источники ключей — материалы, приложенные к заданию (в т. ч. «Сборник психологических тестов.
 Часть I» / сост. Е. Е. Миронова, 2005), и справка пакета «Профиль 2.0» РЦПОМ.
 """
+from . import psy_more, psy_socio, psy_shtur
 
 YES_NO = [{"id": "y", "text": "Да"}, {"id": "n", "text": "Нет"}]
 KI_OPTIONS = [{"id": "2", "text": "Очень нравится (++)"}, {"id": "1", "text": "Нравится (+)"},
@@ -404,11 +413,26 @@ METHODS = {
         "count": 144, "answers": "++ / + / 0 / – / – –", "ask": [], "show_default": "profile",
     },
 }
-METHOD_ORDER = ["ddo", "kos", "epi", "ki144"]
+for _mod in (psy_more, psy_socio, psy_shtur):
+    METHODS.update(_mod.METHODS)
+METHOD_ORDER = (["ddo", "kos", "epi", "ki144"] + psy_more.ORDER + psy_socio.ORDER + psy_shtur.ORDER)
+BLOCK_ORDER = ["Профессиональная направленность", "Свойства личности", "Умственное развитие",
+               "Эмоционально-волевая сфера", "Мотивация учения", "Отношения в школе", "Отношения в коллективе"]
 
 
-def questions(mid):
+def kind(mid):
+    """ind — индивидуальная методика, group — групповая (социометрия)."""
+    return METHODS.get(mid, {}).get("kind") or "ind"
+
+
+def questions(mid, settings=None):
     """Вопросы методики в формате снимка теста (тип psy)."""
+    if mid in psy_more.METHODS:
+        return psy_more.questions(mid)
+    if mid in psy_socio.METHODS:
+        return psy_socio.questions(mid, settings)
+    if mid in psy_shtur.METHODS:
+        return psy_shtur.questions(mid, settings)
     qs = []
     if mid == "ddo":
         for i, (a, b) in enumerate(DDO_PAIRS, 1):
@@ -423,15 +447,28 @@ def questions(mid):
 
 
 def snapshot(mid, settings=None):
+    settings = settings or {}
     m = METHODS[mid]
     st = {"shuffle_questions": False, "shuffle_options": False, "time_limit": 0, "free_nav": True,
-          "show_result": (settings or {}).get("show_result") or m["show_default"], "no_copy": False, "track_focus": False,
+          "show_result": settings.get("show_result") or m["show_default"], "no_copy": False, "track_focus": False,
           "variants": 1, "scale": {"mode": "percent"}, "psy": mid, "ask": m["ask"]}
+    for k in ("about", "form", "grade", "criteria", "picks", "negative", "roster"):
+        if settings.get(k) is not None:
+            st[k] = settings[k]
     qs = []
-    for i, q in enumerate(questions(mid), 1):
+    for i, q in enumerate(questions(mid, settings), 1):
+        body = {"text": q["text"], "options": q["options"], "num": i}
+        for k in ("multi", "max", "image", "section", "input", "hint"):
+            if q.get(k) is not None:
+                body[k] = q[k]
         qs.append({"id": str(i), "task_id": 0, "task_num": 1, "variant": 0, "type": "psy",
-                   "body": {"text": q["text"], "options": q["options"], "num": i}, "answer": {}, "points": 0})
-    return {"test": {"id": None, "title": m["name"], "subject": "Психодиагностика", "grade": None, "settings": st},
+                   "body": body, "answer": {}, "points": 0})
+    if mid in psy_shtur.METHODS:
+        st["sections"] = psy_shtur.sections(settings)   # навигация свободная, но только внутри субтеста
+    title = m["name"]
+    if st.get("form"):
+        title += " — форма " + st["form"]
+    return {"test": {"id": None, "title": title, "subject": "Психодиагностика", "grade": None, "settings": st},
             "tasks": [{"id": 0, "num": 1, "title": "", "level": None, "pick": 0}], "questions": qs, "psy": mid}
 
 
@@ -447,14 +484,51 @@ def _answers(snap_answers):
     return out
 
 
-def score(mid, answers, extra=None):
+def answers_multi(snap_answers):
+    """{номер вопроса: [id, ...]} — для методик с несколькими ответами (социометрия)."""
+    out = {}
+    for qid, resp in snap_answers.items():
+        if not isinstance(resp, dict):
+            continue
+        v = resp.get("choices")
+        if isinstance(v, list) and v:
+            try:
+                out[int(qid)] = [str(x) for x in v if str(x)]
+            except ValueError:
+                pass
+    return out
+
+
+def answers_text(snap_answers):
+    """{номер вопроса: текст} — для заданий со свободным ответом (ШТУР)."""
+    out = {}
+    for qid, resp in snap_answers.items():
+        if not isinstance(resp, dict):
+            continue
+        v = resp.get("text")
+        if isinstance(v, str) and v.strip():
+            try:
+                out[int(qid)] = v.strip()
+            except ValueError:
+                pass
+    return out
+
+
+def score(mid, answers, extra=None, snap=None, manual=None):
     """answers — {qid: response}. Возвращает результат методики."""
+    settings = ((snap or {}).get("test") or {}).get("settings") or {}
     ans = _answers(answers)
     extra = extra or {}
     n = METHODS[mid]["count"]
+    if mid in psy_socio.METHODS:
+        return psy_socio.score(mid, answers_multi(answers), settings)
+    if mid in psy_shtur.METHODS:
+        return psy_shtur.score(mid, ans, answers_text(answers), settings, extra, manual)
     res = {"method": mid, "answered": len(ans), "total": n, "scales": [], "text": [], "warnings": []}
     if len(ans) < n:
         res["warnings"].append("Ответы даны не на все вопросы (%d из %d)." % (len(ans), n))
+    if mid in psy_more.METHODS:
+        return psy_more.score(mid, ans, extra, res, settings)
     if mid == "ddo":
         for k in DDO_ORDER:
             name, keys = DDO_KEY[k]
@@ -573,6 +647,10 @@ def score(mid, answers, extra=None):
 def short_cells(res):
     """Краткие значения для таблицы результатов группы."""
     mid = res.get("method")
+    if mid in psy_more.METHODS:
+        return psy_more.short(res)
+    if mid in psy_shtur.METHODS:
+        return psy_shtur.short(res)
     if mid == "ddo":
         return ["%s %d" % (DDO_KEY[s["id"]][0].split("— ")[1][:6], s["value"]) for s in res["scales"]]
     if mid == "kos":
@@ -583,6 +661,12 @@ def short_cells(res):
 
 
 def table_headers(mid):
+    if mid in psy_more.METHODS:
+        return psy_more.headers(mid)
+    if mid in psy_socio.METHODS:
+        return psy_socio.headers(mid)
+    if mid in psy_shtur.METHODS:
+        return psy_shtur.headers(mid)
     if mid == "ddo":
         return ["П", "Т", "Ч", "З", "Х"]
     if mid == "kos":
@@ -596,6 +680,12 @@ def table_headers(mid):
 
 def table_values(res):
     mid = res.get("method")
+    if mid in psy_more.METHODS:
+        return psy_more.values(res)
+    if mid in psy_socio.METHODS:
+        return psy_socio.values(res)
+    if mid in psy_shtur.METHODS:
+        return psy_shtur.values(res)
     if mid == "kos":
         return ["%s (%s)" % (str(s["coef"]).replace(".", ","), KOS_LEVELS[s["mark"]]) for s in res["scales"]]
     if mid == "epi":

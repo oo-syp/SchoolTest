@@ -57,7 +57,14 @@ def regrade(attempt_id):
             extra = json.loads(a.get("extra") or "{}")
         except ValueError:
             extra = {}
-        res = P.score(snap["psy"], resp, extra)
+        manual = {}
+        for qid, row in ans.items():
+            if row.get("manual") is not None:
+                try:
+                    manual[int(qid)] = row["manual"]
+                except ValueError:
+                    pass
+        res = P.score(snap["psy"], resp, extra, snap, manual)
         db().ex("UPDATE attempts SET psy=?, score=NULL, max_score=NULL, percent=NULL, mark=NULL, pending_manual=0 WHERE id=?",
                 (json.dumps(res, ensure_ascii=False), attempt_id))
         return db().one("SELECT * FROM attempts WHERE id=?", (attempt_id,))

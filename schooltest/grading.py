@@ -235,6 +235,10 @@ def is_answered(q, response):
     if t == "code":
         return bool(r.get("subs"))
     if t == "psy":
+        if q["body"].get("multi"):
+            return bool(r.get("choices"))
+        if q["body"].get("input"):
+            return bool(str(r.get("text") or "").strip())
         return r.get("choice") not in (None, "")
     return False
 

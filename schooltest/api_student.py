@@ -121,6 +121,19 @@ def s_start(req):
     return {"attempt_id": aid}, extra
 
 
+def _sec_state(a):
+    """Текущий субтест методики с отдельным временем и момент его окончания."""
+    try:
+        ex = json.loads(a["extra"] or "{}")
+    except ValueError:
+        ex = {}
+    try:
+        cur = int(ex.get("sec") or 0)
+    except (TypeError, ValueError):
+        cur = 0
+    return cur, ex.get("sec_end")
+
+
 def _attempt(req, aid, allow_waiting=False):
     a = db().one("SELECT * FROM attempts WHERE id=?", (int(aid),))
     need(a, "Тест не начат", 404)
@@ -143,10 +156,20 @@ def _state(a):
            "total": len(plan), "cur": a["cur"], "free_nav": bool(st.get("free_nav", True)),
            "no_copy": bool(st.get("no_copy")), "track_focus": bool(st.get("track_focus", True)),
            "time_left": max(0, int(a["deadline"] - time.time())) if a["deadline"] and a["status"] == "active" else None}
+    sec_cur, sec_left = 0, None
     if snap.get("psy"):
         from . import psy as P
         m = P.METHODS[snap["psy"]]
-        out["psy"] = {"method": snap["psy"], "name": m["name"], "instruction": m["instruction"]}
+        out["psy"] = {"method": snap["psy"], "name": m["name"], "instruction": m["instruction"],
+                      "self": a["student_id"], "about": st.get("about") or ""}
+        secs = st.get("sections")
+        if secs:
+            sec_cur, end = _sec_state(a)
+            sec_left = max(0, int(end - time.time())) if end else None
+            out["psy"]["sections"] = secs
+            out["psy"]["sec"] = sec_cur
+            out["psy"]["sec_left"] = sec_left
+            out["psy"]["sec_total"] = len(secs)
     if a["status"] == "active":
         qs = E.qmap(snap)
         ans = A.answers_map(a["id"])
@@ -156,6 +179,8 @@ def _state(a):
             e = plan[i]
             q = qs.get(e["q"])
             if not q:
+                continue
+            if st.get("sections") and (q["body"].get("section") or 0) != sec_cur:
                 continue
             pq = E.public_question(q, e, (ans.get(e["q"]) or {}).get("plays", 0))
             pq["index"] = i
@@ -238,6 +263,10 @@ def s_answer(req, aid):
         need(idx[0] == a["cur"], "Вопросы проходятся по порядку: вернуться нельзя", 409)
     qq = E.qmap(snap).get(qid)
     need(not qq or qq["type"] != "code", "Решение задачи отправляется кнопкой «Отправить»", 400)
+    if snap["test"]["settings"].get("sections"):
+        sec, end = _sec_state(a)
+        need(qq and (qq["body"].get("section") or 0) == sec, "Этот субтест уже закончен", 409)
+        need(not end or time.time() <= end + 5, "Время субтеста вышло", 409)
     raw = json.dumps(d.get("response"), ensure_ascii=False)
     need(len(raw) <= MAX_RESPONSE, "Слишком большой запрос", 413)
     now = time.time()
@@ -264,6 +293,36 @@ def s_nav(req, aid):
             resp = json.loads(row["response"]) if row and row["response"] else None
             need(q and G.is_answered(q, resp), "Ответьте на вопрос, чтобы перейти к следующему", 409)
     db().ex("UPDATE attempts SET cur=?, last_seen=? WHERE id=?", (cur, time.time(), a["id"]))
+    return _state(db().one("SELECT * FROM attempts WHERE id=?", (a["id"],)))
+
+
+@router.route("POST", "/api/s/a/:aid/section", public=True)
+def s_section(req, aid):
+    """Перейти к следующему субтесту методики (ШТУР-2): у каждого своё время."""
+    a = _active(req, aid)
+    snap = A.snapshot_for(a["run_id"])
+    secs = snap["test"]["settings"].get("sections")
+    need(secs, "У этой методики нет субтестов", 400)
+    cur, _end = _sec_state(a)
+    want = req.json().get("sec")
+    try:
+        want = int(want)
+    except (TypeError, ValueError):
+        want = cur + 1
+    if want != cur + 1:                       # повторный запрос того же перехода — просто состояние
+        return _state(db().one("SELECT * FROM attempts WHERE id=?", (a["id"],)))
+    if want > len(secs):
+        A.finish(a["id"], "student")
+        return _state(db().one("SELECT * FROM attempts WHERE id=?", (a["id"],)))
+    s = secs[want - 1]
+    try:
+        ex = json.loads(a["extra"] or "{}")
+    except ValueError:
+        ex = {}
+    ex["sec"] = want
+    ex["sec_end"] = (time.time() + s["minutes"] * 60) if s.get("minutes") else None
+    db().ex("UPDATE attempts SET extra=?, cur=?, last_seen=? WHERE id=?",
+            (json.dumps(ex, ensure_ascii=False), max(0, int(s["from"]) - 1), time.time(), a["id"]))
     return _state(db().one("SELECT * FROM attempts WHERE id=?", (a["id"],)))
 
 

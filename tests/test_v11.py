@@ -246,7 +246,7 @@ class V11Test(unittest.TestCase):
         tch.post("/api/me/password", {"old": "Teach123", "new": "Teach1234"})
         tch.get("/api/psy/methods", expect=403)
         ms = p.get("/api/psy/methods")
-        self.assertEqual([m["id"] for m in ms], ["ddo", "kos", "epi", "ki144"])
+        self.assertEqual([m["id"] for m in ms][:4], ["ddo", "kos", "epi", "ki144"])
         run = p.post("/api/psy/runs", {"method": "epi", "class_id": cid, "show_result": "profile"})
         s, aid, j = self.student(run["code"], 0, {"gender": "m", "age": "13"})
         self.assertEqual(j["run"]["ask"], ["gender", "age"])

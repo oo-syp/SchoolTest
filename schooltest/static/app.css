@@ -151,3 +151,15 @@ textarea.mono{font:13px/1.4 Consolas,"Courier New",monospace;white-space:pre;wid
 .mcard h3{margin:0;font-size:16px}
 .mcard .acts{margin-top:auto;display:flex;gap:6px;flex-wrap:wrap}
 .promo td input[type=text]{width:120px}
+
+/* 1.2: психодиагностика — социометрия и ШТУР-2 */
+.crit{display:flex;flex-direction:column;gap:4px;max-height:280px;overflow:auto;padding:4px 2px}
+.crit-row{display:flex;gap:8px;align-items:flex-start;padding:4px 6px;border-radius:6px;cursor:pointer;line-height:1.35}
+.crit-row:hover{background:#f1f6f5}
+.crit-row input{margin-top:3px;flex:none;width:17px;height:17px;accent-color:var(--brand2)}
+table.t td.mut{outline:2px solid var(--accent);outline-offset:-2px;font-weight:700}
+table.t td.ok{color:var(--ok);font-weight:600}
+table.t td.bad{color:var(--bad);font-weight:600}
+tr.warn-row td{background:var(--warn-soft)}
+.gen-btns{white-space:nowrap}
+.gen-btns button{min-width:30px;padding:3px 8px;margin-left:3px}
