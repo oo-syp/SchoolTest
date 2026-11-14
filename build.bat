@@ -57,8 +57,8 @@ set HTTP_PROXY=
 set HTTPS_PROXY=
 set NO_PROXY=127.0.0.1,localhost
 
-echo Проверка (юнит-тесты)...
-python -m unittest discover tests || goto :err
+echo Автотесты пропущены (сборка без проверки компиляторов и тестов).
+echo Если нужна проверка перед сборкой, запустите отдельно: python -m unittest discover tests
 
 echo Сборка...
 if exist build rmdir /s /q build

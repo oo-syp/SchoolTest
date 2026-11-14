@@ -299,7 +299,7 @@ class MigrationTest(unittest.TestCase):
             con.commit()
             con.close()
             d = DB.Database(path)
-            self.assertEqual(d.val("SELECT value FROM meta WHERE key='schema'"), "2")
+            self.assertEqual(d.val("SELECT value FROM meta WHERE key='schema'"), str(DB.SCHEMA_VERSION))
             self.assertEqual(d.val("SELECT year_id FROM classes"), d.current_year())
             self.assertIn("kind", [r["name"] for r in d.q("PRAGMA table_info(runs)")])
             d.close()
