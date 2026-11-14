@@ -54,6 +54,17 @@ table.t td.acts{white-space:nowrap;text-align:right}
 .tcard h3{margin:0;font-size:16px;color:var(--brand)}
 .tcard .meta{color:var(--muted);font-size:12px}
 .tcard .acts{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.tcard{position:relative}
+.star{position:absolute;top:8px;right:8px;border:none;background:none;cursor:pointer;font-size:18px;line-height:1;padding:2px;color:var(--muted)}
+.star.on{color:#d4a017}
+.star:hover{color:#d4a017}
+.fnode{padding:6px 8px;border-radius:6px;cursor:pointer;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fnode:hover{background:var(--bg2,#f2f6f5)}
+.fnode.on{background:var(--brand);color:#fff}
+.catcard{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:#fff;cursor:pointer;display:flex;flex-direction:column;gap:4px;transition:border-color .12s,box-shadow .12s}
+.catcard:hover{border-color:#9cc9c3;box-shadow:0 3px 12px rgba(14,79,75,.07)}
+.catcard.on{border-color:var(--brand);background:#f0f7f6}
+.catgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:16px}
 /* редактор теста */
 .task{background:#fff;border:1px solid var(--line);border-radius:10px;margin-bottom:14px}
 .task-head{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);background:#f6faf9;border-radius:10px 10px 0 0;flex-wrap:wrap}

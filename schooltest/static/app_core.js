@@ -104,6 +104,7 @@ var A = window.A = { routes: {}, me: null };
     nav.appendChild(h("div", { class: "grp" }, t("Работа")));
     link("tests", t("Тесты"));
     link("runs", t("Проведение и результаты"));
+    link("surveys", t("Анкеты"));
     link("classes", A.N("classes"));
     if (A.isPsy() && A.isSchool()) {
       nav.appendChild(h("div", { class: "grp" }, t("Психологическая служба")));

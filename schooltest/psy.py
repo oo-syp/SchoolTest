@@ -17,7 +17,7 @@
 Источники ключей — материалы, приложенные к заданию (в т. ч. «Сборник психологических тестов.
 Часть I» / сост. Е. Е. Миронова, 2005), и справка пакета «Профиль 2.0» РЦПОМ.
 """
-from . import psy_more, psy_socio, psy_shtur
+from . import psy_more, psy_socio, psy_shtur, psy_add
 
 YES_NO = [{"id": "y", "text": "Да"}, {"id": "n", "text": "Нет"}]
 KI_OPTIONS = [{"id": "2", "text": "Очень нравится (++)"}, {"id": "1", "text": "Нравится (+)"},
@@ -413,9 +413,9 @@ METHODS = {
         "count": 144, "answers": "++ / + / 0 / – / – –", "ask": [], "show_default": "profile",
     },
 }
-for _mod in (psy_more, psy_socio, psy_shtur):
+for _mod in (psy_more, psy_socio, psy_shtur, psy_add):
     METHODS.update(_mod.METHODS)
-METHOD_ORDER = (["ddo", "kos", "epi", "ki144"] + psy_more.ORDER + psy_socio.ORDER + psy_shtur.ORDER)
+METHOD_ORDER = (["ddo", "kos", "epi", "ki144"] + psy_more.ORDER + psy_socio.ORDER + psy_shtur.ORDER + psy_add.ORDER)
 BLOCK_ORDER = ["Профессиональная направленность", "Свойства личности", "Умственное развитие",
                "Эмоционально-волевая сфера", "Мотивация учения", "Отношения в школе", "Отношения в коллективе"]
 
@@ -433,6 +433,8 @@ def questions(mid, settings=None):
         return psy_socio.questions(mid, settings)
     if mid in psy_shtur.METHODS:
         return psy_shtur.questions(mid, settings)
+    if mid in psy_add.METHODS:
+        return psy_add.questions(mid)
     qs = []
     if mid == "ddo":
         for i, (a, b) in enumerate(DDO_PAIRS, 1):
@@ -529,6 +531,8 @@ def score(mid, answers, extra=None, snap=None, manual=None):
         res["warnings"].append("Ответы даны не на все вопросы (%d из %d)." % (len(ans), n))
     if mid in psy_more.METHODS:
         return psy_more.score(mid, ans, extra, res, settings)
+    if mid in psy_add.METHODS:
+        return psy_add.score(mid, ans, extra, res, settings)
     if mid == "ddo":
         for k in DDO_ORDER:
             name, keys = DDO_KEY[k]
@@ -651,6 +655,8 @@ def short_cells(res):
         return psy_more.short(res)
     if mid in psy_shtur.METHODS:
         return psy_shtur.short(res)
+    if mid in psy_add.METHODS:
+        return psy_add.short(res)
     if mid == "ddo":
         return ["%s %d" % (DDO_KEY[s["id"]][0].split("— ")[1][:6], s["value"]) for s in res["scales"]]
     if mid == "kos":
@@ -667,6 +673,8 @@ def table_headers(mid):
         return psy_socio.headers(mid)
     if mid in psy_shtur.METHODS:
         return psy_shtur.headers(mid)
+    if mid in psy_add.METHODS:
+        return psy_add.headers(mid)
     if mid == "ddo":
         return ["П", "Т", "Ч", "З", "Х"]
     if mid == "kos":
@@ -686,6 +694,8 @@ def table_values(res):
         return psy_socio.values(res)
     if mid in psy_shtur.METHODS:
         return psy_shtur.values(res)
+    if mid in psy_add.METHODS:
+        return psy_add.values(res)
     if mid == "kos":
         return ["%s (%s)" % (str(s["coef"]).replace(".", ","), KOS_LEVELS[s["mark"]]) for s in res["scales"]]
     if mid == "epi":

@@ -10,6 +10,7 @@
 import argparse
 import json
 import os
+import socket
 import sys
 import threading
 import time
@@ -96,7 +97,14 @@ def backup_loop(app, keep):
 def urls(port, host):
     if host in ("127.0.0.1", "localhost"):
         return ["http://127.0.0.1:%d" % port]
-    return ["http://127.0.0.1:%d" % port] + ["http://%s:%d" % (ip, port) for ip in local_addresses()]
+    out = ["http://127.0.0.1:%d" % port] + ["http://%s:%d" % (ip, port) for ip in local_addresses()]
+    try:
+        name = socket.gethostname()
+    except OSError:
+        name = ""
+    if name:
+        out.append("http://%s:%d" % (name, port))
+    return out
 
 
 def run_gui(app, srv, cfg):

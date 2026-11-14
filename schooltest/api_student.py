@@ -10,6 +10,7 @@ import time
 
 from . import engine as E, grading as G
 from . import attempts as A
+from . import anticheat as AC
 from .web import router, ApiError, FileResponse, db, need, b64data, fio
 
 _JOIN_LOG = {}
@@ -155,6 +156,7 @@ def _state(a):
     out = {"attempt_id": a["id"], "status": a["status"], "title": snap["test"]["title"], "student": a["student_name"],
            "total": len(plan), "cur": a["cur"], "free_nav": bool(st.get("free_nav", True)),
            "no_copy": bool(st.get("no_copy")), "track_focus": bool(st.get("track_focus", True)),
+           "cheat_status": a["cheat_status"],
            "time_left": max(0, int(a["deadline"] - time.time())) if a["deadline"] and a["status"] == "active" else None}
     sec_cur, sec_left = 0, None
     if snap.get("psy"):
@@ -243,6 +245,8 @@ def _active(req, aid):
     a, _w = _attempt(req, aid)
     if a["status"] != "active":
         raise ApiError(409, "Время вышло" if a["deadline"] and time.time() > a["deadline"] else "Тест завершён", "finished")
+    if a["cheat_status"] == "blocked":
+        raise ApiError(409, "Попытка приостановлена проверкой на списывание. Дождитесь решения учителя", "blocked")
     run = db().one("SELECT status FROM runs WHERE id=?", (a["run_id"],))
     if run["status"] != "open":
         A.finish(a["id"], "closed")
@@ -274,7 +278,12 @@ def s_answer(req, aid):
             "ON CONFLICT(attempt_id,qid) DO UPDATE SET response=excluded.response, updated_at=excluded.updated_at",
             (a["id"], qid, raw, now))
     db().ex("UPDATE attempts SET last_seen=? WHERE id=?", (now, a["id"]))
-    return {"ok": True, "saved": now}
+    try:
+        AC.check_after_answer(a["id"])
+    except Exception:  # noqa — проверка на списывание не должна мешать сохранению ответа
+        pass
+    a2 = db().one("SELECT cheat_status FROM attempts WHERE id=?", (a["id"],))
+    return {"ok": True, "saved": now, "cheat_status": a2["cheat_status"]}
 
 
 @router.route("POST", "/api/s/a/:aid/nav", public=True)

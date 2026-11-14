@@ -6,7 +6,7 @@ import sqlite3
 import threading
 import time
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -193,6 +193,90 @@ CREATE TABLE IF NOT EXISTS audit (
     at TEXT DEFAULT CURRENT_TIMESTAMP,
     user_id INTEGER, login TEXT, ip TEXT, action TEXT, details TEXT
 );
+
+-- Каталогизация тестов и методик (1.3): общие на школу папки, дерево произвольной глубины
+CREATE TABLE IF NOT EXISTS folders (
+    id INTEGER PRIMARY KEY,
+    parent_id INTEGER REFERENCES folders(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'test',   -- test | psy
+    name TEXT NOT NULL DEFAULT '',
+    sort INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS ix_folders_parent ON folders(parent_id);
+
+-- Избранное (1.3): закрепление тестов и методик психодиагностики, своё у каждого пользователя
+CREATE TABLE IF NOT EXISTS favorites (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,         -- test | psy
+    ref TEXT NOT NULL,          -- id теста или код методики
+    created_at REAL,
+    PRIMARY KEY(user_id, kind, ref)
+);
+
+-- Банк вопросов (1.3): общий на школу набор переиспользуемых вопросов
+CREATE TABLE IF NOT EXISTS bank_questions (
+    id INTEGER PRIMARY KEY,
+    owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    subject TEXT NOT NULL DEFAULT '',
+    tags TEXT NOT NULL DEFAULT '',
+    type TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '{}',
+    answer TEXT NOT NULL DEFAULT '{}',
+    points REAL NOT NULL DEFAULT 1,
+    source_test_id INTEGER REFERENCES tests(id) ON DELETE SET NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS ix_bank_subject ON bank_questions(subject);
+
+-- Анкеты (конструктор, 1.3): отдельные от тестов, без оценивания
+CREATE TABLE IF NOT EXISTS surveys (
+    id INTEGER PRIMARY KEY,
+    owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    title TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    audience TEXT NOT NULL DEFAULT 'students',   -- students | anon | teachers
+    settings TEXT NOT NULL DEFAULT '{}',
+    folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
+    archived INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS survey_questions (
+    id INTEGER PRIMARY KEY,
+    survey_id INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+    sort INTEGER NOT NULL DEFAULT 0,
+    type TEXT NOT NULL DEFAULT 'single',   -- single | multi | likert | open
+    text TEXT NOT NULL DEFAULT '',
+    options TEXT NOT NULL DEFAULT '[]',
+    required INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS ix_survey_q ON survey_questions(survey_id, sort);
+
+-- Проведение анкет (код, как у теста) и ответы
+CREATE TABLE IF NOT EXISTS survey_runs (
+    id INTEGER PRIMARY KEY,
+    survey_id INTEGER REFERENCES surveys(id) ON DELETE SET NULL,
+    class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL,
+    owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    code TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    snapshot TEXT NOT NULL DEFAULT '{}',
+    created_at REAL NOT NULL,
+    closed_at REAL
+);
+CREATE INDEX IF NOT EXISTS ix_survey_runs_code ON survey_runs(code, status);
+
+CREATE TABLE IF NOT EXISTS survey_responses (
+    id INTEGER PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES survey_runs(id) ON DELETE CASCADE,
+    respondent TEXT NOT NULL DEFAULT '',   -- ФИО, "Аноним #N" или логин педагога
+    student_id INTEGER REFERENCES students(id) ON DELETE SET NULL,
+    answers TEXT NOT NULL DEFAULT '{}',
+    created_at REAL
+);
+CREATE INDEX IF NOT EXISTS ix_survey_resp_run ON survey_responses(run_id);
 """
 
 
@@ -224,11 +308,15 @@ class Database(object):
                ("students", "person_id", "INTEGER"),
                ("runs", "kind", "TEXT NOT NULL DEFAULT 'test'"),
                ("attempts", "psy", "TEXT"),
-               ("attempts", "extra", "TEXT NOT NULL DEFAULT '{}'")]
+               ("attempts", "extra", "TEXT NOT NULL DEFAULT '{}'"),
+               ("tests", "folder_id", "INTEGER REFERENCES folders(id) ON DELETE SET NULL"),
+               ("attempts", "cheat_flags", "TEXT NOT NULL DEFAULT '[]'"),
+               ("attempts", "cheat_status", "TEXT NOT NULL DEFAULT 'ok'")]  # ok | suspect | blocked
         for table, col, decl in add:
             if col not in self._cols(table):
                 self.conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, col, decl))
         self.conn.execute("CREATE INDEX IF NOT EXISTS ix_classes_year ON classes(year_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS ix_tests_folder ON tests(folder_id)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS ix_students_person ON students(person_id)")
         self.conn.execute("UPDATE students SET person_id=id WHERE person_id IS NULL")
         if self.conn.execute("SELECT COUNT(*) FROM years").fetchone()[0] == 0:

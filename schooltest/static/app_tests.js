@@ -3,24 +3,84 @@
 (function () {
   var h = ST.h, t = ST.t, api = ST.api;
 
+  /* ---------------- папки (1.3) ---------------- */
+  function flattenFolders(tree, depth, out) {
+    out = out || [];
+    (tree || []).forEach(function (n) {
+      out.push({ id: n.id, name: n.name, depth: depth || 0, count: n.count });
+      flattenFolders(n.children, (depth || 0) + 1, out);
+    });
+    return out;
+  }
+
+  function folderPicker(curId) {
+    return api("GET", "/api/folders?kind=test").then(function (r) {
+      var flat = flattenFolders(r.tree);
+      var sel = h("select", null, h("option", { value: "" }, t("— Корневая папка —")),
+        flat.map(function (f) { return h("option", { value: f.id }, new Array((f.depth || 0) + 1).join("— ") + f.name); }));
+      sel.value = curId || "";
+      var nameInput = h("input", { type: "text", placeholder: t("Название новой папки") });
+      var addBtn = h("button", { class: "sm" }, t("Добавить"));
+      addBtn.addEventListener("click", function () {
+        if (!nameInput.value.trim()) return;
+        api("POST", "/api/folders", { name: nameInput.value.trim(), parent_id: sel.value || null }).then(function (r2) {
+          sel.appendChild(h("option", { value: r2.id, selected: true }, nameInput.value.trim()));
+          nameInput.value = "";
+        }).catch(A.err);
+      });
+      var newRow = h("div", { style: { display: "flex", gap: "8px" } }, nameInput, addBtn);
+      var body = h("div", { class: "form" },
+        A.field(t("Папка"), sel, "wide"),
+        h("div", { class: "muted small", style: { margin: "6px 0" } }, t("или создайте новую:")),
+        A.field(t("Новая папка"), newRow, "wide"));
+      return ST.modal(t("Переместить в папку"), body,
+        [{ text: t("Отмена"), value: null }, { text: t("Переместить"), value: 1, cls: "pri" }]).then(function (v) {
+        return v ? (sel.value || null) : undefined;
+      });
+    });
+  }
+
   /* ---------------- список тестов ---------------- */
   A.route("tests", function (box, args, q) {
     var arch = q.archived === "1";
     A.head(box, arch ? t("Архив тестов") : t("Тесты"), A.isAdmin() ? t("Администратор видит тесты всех пользователей") : null, [
-      h("button", { class: "pri", onclick: newTest }, "＋ " + t("Создать тест")),
-      h("button", { onclick: importDialog }, "⬆ " + t("Импорт теста"))]);
+      h("button", { class: "pri", onclick: newTest }, "\uFF0B " + t("Создать тест")),
+      h("button", { onclick: importDialog }, "\u2B06 " + t("Импорт теста"))]);
     var search = h("input", { type: "search", placeholder: t("Поиск по названию или предмету"), style: { minWidth: "260px" } });
     var own = A.select([["all", t("Все доступные")], ["mine", t("Только мои")], ["shared", t("Общие (других учителей)")]], "all");
     var list = h("div");
+    var side = h("div", { class: "card", style: { minWidth: "200px" } });
+    var curFolder = "all";   // all | null(корень) | fav | <id>
     box.appendChild(h("div", { class: "bar" }, search, own, h("div", { class: "sp" }),
-      h("a", { href: arch ? "#/tests" : "#/tests?archived=1" }, arch ? t("← К действующим тестам") : t("Архив"))));
-    box.appendChild(list);
-    return api("GET", "/api/tests" + (arch ? "?archived=1" : "")).then(function (tests) {
+      h("a", { href: arch ? "#/tests" : "#/tests?archived=1" }, arch ? t("\u2190 К действующим тестам") : t("Архив"))));
+    box.appendChild(h("div", { style: { display: "flex", gap: "16px", alignItems: "flex-start" } }, side, h("div", { style: { flex: "1", minWidth: 0 } }, list)));
+    return Promise.all([api("GET", "/api/tests" + (arch ? "?archived=1" : "")), api("GET", "/api/folders?kind=test"), api("GET", "/api/favorites?kind=test")])
+      .then(function (res) {
+      var tests = res[0], folderTree = res[1].tree, rootCount = res[1].root_count, favSet = {};
+      res[2].items.forEach(function (f) { favSet[f.ref] = true; });
+
+      function drawSide() {
+        side.innerHTML = "";
+        side.appendChild(h("div", { class: "fnode" + (curFolder === "all" ? " on" : ""), onclick: function () { curFolder = "all"; drawSide(); draw(); } }, t("Все тесты")));
+        side.appendChild(h("div", { class: "fnode" + (curFolder === "fav" ? " on" : ""), onclick: function () { curFolder = "fav"; drawSide(); draw(); } }, "\u2605 " + t("Избранное")));
+        side.appendChild(h("div", { class: "fnode" + (curFolder === null ? " on" : ""), onclick: function () { curFolder = null; drawSide(); draw(); } },
+          t("— Корневая папка —") + " (" + (rootCount || 0) + ")"));
+        function node(n, depth) {
+          side.appendChild(h("div", { class: "fnode" + (curFolder === n.id ? " on" : ""), style: { paddingLeft: (depth * 14 + 8) + "px" },
+            onclick: function () { curFolder = n.id; drawSide(); draw(); } }, "\uD83D\uDCC1 " + n.name + " (" + n.count + ")"));
+          (n.children || []).forEach(function (c) { node(c, depth + 1); });
+        }
+        folderTree.forEach(function (n) { node(n, 0); });
+      }
+
       function draw() {
         var f = search.value.trim().toLowerCase();
         var rows = tests.filter(function (x) {
           if (own.value === "mine" && !x.mine) return false;
           if (own.value === "shared" && x.mine) return false;
+          if (curFolder === "fav") { if (!favSet[String(x.id)]) return false; }
+          else if (curFolder === null) { if (x.folder_id) return false; }
+          else if (curFolder !== "all") { if (x.folder_id !== curFolder) return false; }
           return !f || (x.title + " " + (x.subject || "")).toLowerCase().indexOf(f) >= 0;
         });
         list.innerHTML = "";
@@ -32,23 +92,41 @@
         var grid = h("div", { class: "tlist" });
         rows.forEach(function (x) {
           var scale = x.settings.scale || {};
+          var isFav = !!favSet[String(x.id)];
           grid.appendChild(h("div", { class: "tcard", onclick: function (e) { if (!e.target.closest("button")) A.go("#/test/" + x.id); } },
+            h("button", { class: "star" + (isFav ? " on" : ""), title: t("Закрепить"), onclick: function (e) {
+              e.stopPropagation();
+              api("POST", "/api/favorites/toggle", { kind: "test", ref: String(x.id) }).then(function (r) {
+                if (r.favorite) favSet[String(x.id)] = true; else delete favSet[String(x.id)];
+                draw();
+              }).catch(A.err);
+            } }, isFav ? "\u2605" : "\u2606"),
             h("h3", null, x.title),
-            h("div", { class: "meta" }, [x.subject, x.grade ? ST.tf("{0} класс", x.grade) : null].filter(Boolean).join(" · ") || " "),
+            h("div", { class: "meta" }, [x.subject, x.grade ? ST.tf("{0} класс", x.grade) : null].filter(Boolean).join(" · ") || "\u00a0"),
             h("div", { class: "meta" }, ST.tf("Вопросов: {0}", x.questions), " · ", ST.tf("проведено: {0}", x.runs),
               x.settings.time_limit ? " · " + ST.tf("{0} мин", x.settings.time_limit) : "",
               scale.mode === "norms" ? " · " + t("по нормам") : ""),
-            !x.mine ? h("div", { class: "meta" }, "👤 " + x.owner, x.shared ? " · " + t("общий") : "") :
+            !x.mine ? h("div", { class: "meta" }, "\uD83D\uDC64 " + x.owner, x.shared ? " · " + t("общий") : "") :
               (x.shared ? h("div", { class: "meta" }, t("Доступен другим учителям")) : null),
             h("div", { class: "acts" },
-              h("button", { class: "sm pri", disabled: !x.questions || null, onclick: function () { A.startRun(x.id); } }, "▶ " + t("Провести")),
+              h("button", { class: "sm pri", disabled: !x.questions || null, onclick: function () { A.startRun(x.id); } }, "\u25B6 " + t("Провести")),
               h("button", { class: "sm", onclick: function () { A.go("#/test/" + x.id); } }, x.mine || A.isAdmin() ? t("Изменить") : t("Открыть")),
-              h("button", { class: "sm", onclick: function () { copyTest(x); } }, t("Копия")))));
+              h("button", { class: "sm", onclick: function () { copyTest(x); } }, t("Копия")),
+              h("button", { class: "sm", onclick: function () {
+                folderPicker(x.folder_id).then(function (fid) {
+                  if (fid === undefined) return;
+                  api("POST", "/api/tests/" + x.id + "/move", { folder_id: fid || null }).then(function () {
+                    x.folder_id = fid ? +fid : null;
+                    return api("GET", "/api/folders?kind=test");
+                  }).then(function (ft) { folderTree = ft.tree; rootCount = ft.root_count; drawSide(); draw(); }).catch(A.err);
+                });
+              } }, "\uD83D\uDCC1 " + t("В папку")))));
         });
         list.appendChild(grid);
       }
       search.addEventListener("input", draw);
       own.addEventListener("change", draw);
+      drawSide();
       draw();
     });
   });

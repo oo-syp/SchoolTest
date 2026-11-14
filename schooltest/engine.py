@@ -18,6 +18,7 @@ DEFAULT_SETTINGS = {
     "scale": {"mode": "percent"},
     "result_kind": "mark",      # mark | passfail | percent | credit (для предприятий)
     "pass_percent": 60,
+    "anticheat": {"enabled": False, "block": False, "pair_percent": 85, "focus_limit": 3, "fast_seconds": 4},
 }
 
 

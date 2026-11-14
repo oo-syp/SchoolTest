@@ -16,24 +16,65 @@
     var pane = h("div");
     box.appendChild(pane);
     if (tab === "runs") return runsList(pane);
-    return api("GET", "/api/psy/methods").then(function (ms) {
+    return Promise.all([api("GET", "/api/psy/methods"), api("GET", "/api/favorites?kind=psy")]).then(function (res) {
+      var ms = res[0], favSet = {};
+      res[1].items.forEach(function (f) { favSet[f.ref] = true; });
       var blocks = [];
       ms.forEach(function (m) { if (blocks.indexOf(m.block) < 0) blocks.push(m.block); });
-      blocks.forEach(function (bl) {
-        pane.appendChild(h("h2", null, t(bl)));
-        var grid = h("div", { class: "mgrid" });
-        ms.filter(function (m) { return m.block === bl; }).forEach(function (m) {
-          grid.appendChild(h("div", { class: "mcard" }, h("h3", null, m.name), h("div", { class: "muted small" }, m.author),
-            h("div", null, h("span", { class: "pill" }, ST.tf("{0} вопр.", m.count)),
-              m.kind === "group" ? h("span", { class: "pill" }, t("групповая")) : null,
-              m.ask && m.ask.length ? h("span", { class: "pill" }, t("пол и возраст")) : null,
-              m.timed ? h("span", { class: "pill" }, t("с ограничением времени")) : null),
-            h("div", { class: "small" }, m.purpose), h("div", { class: "muted small" }, m.audience),
-            h("div", { class: "acts" }, h("button", { class: "pri sm", onclick: function () { launch(m); } }, "▶ " + t("Провести")),
-              h("a", { class: "btn sm", href: "#/psymethod/" + m.id }, t("Описание и ключ")))));
+      var curBlock = "all";
+      var cats = h("div", { class: "catgrid" });
+      var grids = h("div");
+      pane.appendChild(cats);
+      pane.appendChild(grids);
+
+      function star(m) {
+        var isFav = !!favSet[m.id];
+        return h("button", { class: "star" + (isFav ? " on" : ""), title: t("Закрепить"), onclick: function (e) {
+          e.stopPropagation();
+          api("POST", "/api/favorites/toggle", { kind: "psy", ref: m.id }).then(function (r) {
+            if (r.favorite) favSet[m.id] = true; else delete favSet[m.id];
+            drawCats(); drawGrids();
+          }).catch(A.err);
+        } }, isFav ? "★" : "☆");
+      }
+
+      function drawCats() {
+        cats.innerHTML = "";
+        var favCount = ms.filter(function (m) { return favSet[m.id]; }).length;
+        cats.appendChild(h("div", { class: "catcard" + (curBlock === "all" ? " on" : ""), onclick: function () { curBlock = "all"; drawCats(); drawGrids(); } },
+          h("b", null, t("Все методики")), h("span", { class: "muted small" }, ST.tf("{0} методик", ms.length))));
+        if (favCount) cats.appendChild(h("div", { class: "catcard" + (curBlock === "fav" ? " on" : ""), onclick: function () { curBlock = "fav"; drawCats(); drawGrids(); } },
+          h("b", null, "★ " + t("Избранное")), h("span", { class: "muted small" }, ST.tf("{0} методик", favCount))));
+        blocks.forEach(function (bl) {
+          var n = ms.filter(function (m) { return m.block === bl; }).length;
+          cats.appendChild(h("div", { class: "catcard" + (curBlock === bl ? " on" : ""), onclick: function () { curBlock = bl; drawCats(); drawGrids(); } },
+            h("b", null, t(bl)), h("span", { class: "muted small" }, ST.tf("{0} методик", n))));
         });
-        pane.appendChild(grid);
-      });
+      }
+
+      function drawGrids() {
+        grids.innerHTML = "";
+        var showBlocks = curBlock === "all" || curBlock === "fav" ? blocks : [curBlock];
+        showBlocks.forEach(function (bl) {
+          var items = ms.filter(function (m) { return m.block === bl && (curBlock !== "fav" || favSet[m.id]); });
+          if (!items.length) return;
+          grids.appendChild(h("h2", null, t(bl)));
+          var grid = h("div", { class: "mgrid" });
+          items.forEach(function (m) {
+            grid.appendChild(h("div", { class: "mcard", style: { position: "relative" } }, star(m), h("h3", null, m.name), h("div", { class: "muted small" }, m.author),
+              h("div", null, h("span", { class: "pill" }, ST.tf("{0} вопр.", m.count)),
+                m.kind === "group" ? h("span", { class: "pill" }, t("групповая")) : null,
+                m.ask && m.ask.length ? h("span", { class: "pill" }, t("пол и возраст")) : null,
+                m.timed ? h("span", { class: "pill" }, t("с ограничением времени")) : null),
+              h("div", { class: "small" }, m.purpose), h("div", { class: "muted small" }, m.audience),
+              h("div", { class: "acts" }, h("button", { class: "pri sm", onclick: function () { launch(m); } }, "▶ " + t("Провести")),
+                h("a", { class: "btn sm", href: "#/psymethod/" + m.id }, t("Описание и ключ")))));
+          });
+          grids.appendChild(grid);
+        });
+      }
+      drawCats();
+      drawGrids();
       pane.appendChild(h("div", { class: "infobox", style: { marginTop: "14px" } },
         h("p", { style: { marginTop: 0 } }, t("Проведение — как обычного теста: учащиеся открывают адрес программы, вводят код и выбирают себя в списке. Вопросы идут по одному, после ответа — сразу следующий. Подсчёт по ключу и интерпретация — автоматически.")),
         h("p", { style: { marginBottom: 0 } }, t("Социометрия — групповая методика: учащийся выбирает одноклассников из списка класса и своих результатов не видит, выводы делаются по классу (социоматрица, статусы, социограмма, индексы). ШТУР-2 идёт по субтестам: перед каждым показывается описание с примерами, время каждого субтеста ограничено, вернуться к пройденному нельзя."))));

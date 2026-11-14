@@ -8,6 +8,7 @@ from collections import Counter
 
 from . import auth, engine as E, grading as G, xlsx, i18n
 from . import attempts as A
+from . import anticheat as AC
 from .api_tests import get_test
 from .web import router, ApiError, FileResponse, db, need, is_admin, fio, default_scale, XLSX_CT
 
@@ -351,6 +352,23 @@ def _num(v):
         return ""
     v = round(float(v), 2)
     return str(int(v)) if v == int(v) else str(v).replace(".", ",")
+
+
+@router.route("GET", "/api/runs/:rid/anticheat")
+def api_run_anticheat(req, rid):
+    """Отчёт проверки на списывание: совпадения ответов у пар, подозрительно быстрые ответы, уход со страницы."""
+    r = get_run(rid, req)
+    return AC.run_report(r["id"])
+
+
+@router.route("POST", "/api/attempts/:aid/unblock")
+def api_attempt_unblock(req, aid):
+    """Снять приостановку попытки, выставленную проверкой на списывание."""
+    a = db().one("SELECT * FROM attempts WHERE id=?", (int(aid),))
+    need(a, "Не найдено", 404)
+    get_run(a["run_id"], req)
+    AC.unblock(a["id"])
+    return {"ok": True}
 
 
 @router.route("GET", "/api/runs/:rid/results")

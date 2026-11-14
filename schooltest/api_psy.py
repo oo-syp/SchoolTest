@@ -8,7 +8,7 @@ import re
 import time
 from collections import Counter
 
-from . import auth, psy as P, psy_more, psy_socio, psy_shtur, xlsx, i18n
+from . import auth, psy as P, psy_more, psy_socio, psy_shtur, psy_add, xlsx, i18n
 from . import attempts as A
 from .web import router, FileResponse, db, need, is_admin, fio, XLSX_CT
 
@@ -65,6 +65,8 @@ def api_psy_method(req, mid):
         m["forms"] = psy_shtur.D.FORMS
         m["form"] = req.arg("form") or "А"
         m["sections"] = psy_shtur.sections()
+    elif mid in psy_add.METHODS:
+        m["key"] = psy_add.key_rows(mid)
     elif mid == "ddo":
         m["key"] = [{"name": v[0], "items": v[1].replace("a", "а").replace("b", "б")} for k, v in
                     ((k, P.DDO_KEY[k]) for k in P.DDO_ORDER)]
@@ -180,6 +182,8 @@ def group_summary(mid, results):
         return psy_shtur.summary(mid, results)
     if mid in psy_socio.METHODS:
         return []
+    if mid in psy_add.METHODS:
+        return psy_add.summary(mid, results)
     if mid == "ddo":
         c = Counter(t for r in results for t in r.get("top") or [])
         for k in P.DDO_ORDER:
@@ -333,3 +337,81 @@ def api_psy_student(req, sid):
         out.append({"attempt_id": a["id"], "date": a["finished_at"], "method": res.get("method"), "title": a["title"],
                     "class": a["class_name"], "year": a["year_name"], "summary": res.get("summary", "")})
     return {"student": fio(s), "items": out}
+
+
+PROFILE_METHODS = ["ddo", "ki144", "kos", "shtur"]   # ДДО Климова, Карта интересов, КОС, ШТУР-2
+
+
+@router.route("GET", "/api/psy/students/:sid/profile")
+def api_psy_profile(req, sid):
+    """Сводный профориентационный профиль: последние результаты по ДДО, Карте интересов, КОС и ШТУР-2."""
+    need_psy(req)
+    s = db().one("SELECT * FROM students WHERE id=?", (int(sid),))
+    need(s, "Не найдено", 404)
+    sql = ("SELECT a.id, a.finished_at, r.snapshot FROM attempts a JOIN runs r ON r.id=a.run_id "
+           "JOIN students st ON st.id=a.student_id WHERE st.person_id=? AND r.kind='psy' AND a.status='finished' "
+           "ORDER BY a.finished_at")
+    rows = db().q(sql, (s["person_id"] or s["id"],))
+    by_method = {}
+    for a in rows:
+        try:
+            mid = json.loads(a["snapshot"] or "{}").get("psy")
+        except ValueError:
+            continue
+        if mid in PROFILE_METHODS:
+            by_method[mid] = a["id"]   # оставляем последнее обследование по каждой методике
+    parts = []
+    for mid in PROFILE_METHODS:
+        aid = by_method.get(mid)
+        if not aid:
+            parts.append({"method": mid, "name": P.METHODS.get(mid, {}).get("name", mid), "has_data": False})
+            continue
+        a = db().one("SELECT * FROM attempts WHERE id=?", (aid,))
+        res = _res(a) or {}
+        top = sorted([x for x in res.get("scales") or [] if isinstance(x.get("value"), (int, float))],
+                     key=lambda x: -x["value"])[:3]
+        parts.append({"method": mid, "name": P.METHODS.get(mid, {}).get("name", mid), "has_data": True,
+                     "date": a["finished_at"], "attempt_id": aid, "summary": res.get("summary", ""),
+                     "top": [{"name": t["name"], "value": t["value"]} for t in top]})
+    done = [p for p in parts if p["has_data"]]
+    conclusion = ""
+    if done:
+        bits = []
+        for p in done:
+            if p["top"]:
+                bits.append("%s: %s" % (p["name"], ", ".join(t["name"] for t in p["top"][:2])))
+        conclusion = ("Ведущие направления по пройденным методикам — " + "; ".join(bits) + ". "
+                      "Профиль составлен по последним прохождениям; чем больше методик пройдено, тем он полнее.")
+    else:
+        conclusion = "Ни одна из методик профориентационного блока (ДДО, Карта интересов, КОС, ШТУР-2) ещё не пройдена."
+    return {"student": fio(s), "parts": parts, "conclusion": conclusion}
+
+
+@router.route("GET", "/api/psy/compare")
+def api_psy_compare(req):
+    """Сравнение двух обследований одной методики (повторная диагностика)."""
+    need_psy(req)
+    a1 = db().one("SELECT * FROM attempts WHERE id=?", (int(req.arg("a1") or 0),))
+    a2 = db().one("SELECT * FROM attempts WHERE id=?", (int(req.arg("a2") or 0),))
+    need(a1 and a2, "Обследование не найдено", 404)
+    r1, r2 = _run(req, a1["run_id"]), _run(req, a2["run_id"])
+    s1, s2 = A.snapshot_for(r1["id"]).get("psy"), A.snapshot_for(r2["id"]).get("psy")
+    need(s1 and s1 == s2, "Сравнивать можно только результаты одной и той же методики", 400)
+    need(a1["student_id"] and a1["student_id"] == a2["student_id"], "Обследования принадлежат разным учащимся", 400)
+    need(a1["id"] != a2["id"], "Выберите два разных обследования", 400)
+    res1, res2 = _res(a1) or {}, _res(a2) or {}
+    by_id2 = dict((x["id"], x) for x in res2.get("scales") or [] if "id" in x)
+    rows = []
+    for x in res1.get("scales") or []:
+        y = by_id2.get(x.get("id"))
+        v1, v2 = x.get("value"), y.get("value") if y else None
+        delta = (v2 - v1) if isinstance(v1, (int, float)) and isinstance(v2, (int, float)) else None
+        rows.append({"name": x.get("name"), "before": v1, "after": v2, "delta": delta})
+    order = a1["finished_at"] <= a2["finished_at"]
+    return {"method": s1, "method_name": P.METHODS[s1]["name"], "student": a1["student_name"],
+            "before_date": a1["finished_at"] if order else a2["finished_at"],
+            "after_date": a2["finished_at"] if order else a1["finished_at"],
+            "rows": rows if order else [{"name": r["name"], "before": r["after"], "after": r["before"],
+                                         "delta": (-r["delta"] if r["delta"] is not None else None)} for r in rows],
+            "before_summary": (res1 if order else res2).get("summary", ""),
+            "after_summary": (res2 if order else res1).get("summary", "")}
