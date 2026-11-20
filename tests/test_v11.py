@@ -14,7 +14,7 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from schooltest import main as M, judge as J, psy as P, db as DB  # noqa: E402
+from schooltest import main as M, judge, judge as J, psy as P, db as DB  # noqa: E402
 from schooltest.server import ServerThread  # noqa: E402
 from test_api import Client  # noqa: E402
 
@@ -113,6 +113,7 @@ class V11Test(unittest.TestCase):
             time.sleep(0.1)
         self.fail("посылки не проверены")
 
+    @unittest.skipUnless(judge.Config().path("cpp"), "нужен компилятор C++ (g++) — тест пропущен")
     def test_2_code(self):
         cid = self.make_class("8А", 2)
         tid = self.t.post("/api/tests", {"title": "Программирование"})["id"]
