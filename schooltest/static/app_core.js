@@ -117,6 +117,7 @@ var A = window.A = { routes: {}, me: null };
       link("years", t("Учебные годы"));
       link("compilers", t("Компиляторы"));
       link("backup", t("Резервные копии"));
+      link("https", t("HTTPS и адрес"));
       link("audit", t("Журнал действий"));
     } else link("compilers", t("Компиляторы"));
     if (!A.isAdmin()) link("backup", t("Резервные копии"));

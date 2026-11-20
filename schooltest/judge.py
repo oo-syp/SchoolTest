@@ -100,6 +100,9 @@ def candidates(lang):
             w = _which("python")
             if w and "WindowsApps" not in w:
                 found.insert(0, w)
+            # python.exe из виртуального окружения (.venv) на Windows — лишь «переходник» к основному Python:
+            # запускает его дочерним процессом, что ломает ограничения (job object); берём основной интерпретатор
+            found = [x for x in found if not os.path.exists(os.path.join(os.path.dirname(os.path.dirname(x)), "pyvenv.cfg"))]
         else:
             w = _which("python3")
             if w:
@@ -202,7 +205,7 @@ def compile_source(lang, code, workdir, cfg):
         if path == "builtin":
             if getattr(sys, "frozen", False):
                 return [sys.executable, "--pyrun", src], "", None
-            return [sys.executable, "-I", "-X", "utf8", src], "", None
+            return [getattr(sys, "_base_executable", None) or sys.executable, "-I", "-X", "utf8", src], "", None
         return [path, "-I", "-X", "utf8"] + flags + [src], "", None
     if lang == "fpc":
         args = [path] + flags + ["-o" + exe, src]

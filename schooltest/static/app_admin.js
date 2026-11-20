@@ -244,6 +244,76 @@
     });
   }
 
+  /* ---------------- HTTPS и адрес (1.4) ---------------- */
+  A.route("https", function (box) {
+    if (!A.isAdmin()) return A.go("#/tests");
+    A.head(box, t("HTTPS и адрес"), t("Адрес по имени компьютера и собственный сертификат безопасности школы. HTTP и HTTPS работают на одном порту."));
+    return api("GET", "/api/https").then(function (D) {
+      var host = (D.host || "").toUpperCase();
+      var mono = { fontFamily: "Consolas, monospace" };
+      box.appendChild(h("div", { class: "card" }, h("h2", { style: { marginTop: 0 } }, t("Адрес программы")),
+        h("div", { class: "muted" }, t("Сообщите пользователям адрес по имени компьютера — он не меняется при смене IP-адреса.")),
+        D.urls.map(function (u, i) { return h("div", { style: { fontFamily: mono.fontFamily, fontWeight: i === 0 ? "700" : "400" } }, u); })));
+      var years = A.select([["0", t("Бессрочный (по умолчанию)")], ["1", t("1 год")], ["2", t("2 года")], ["5", t("5 лет")], ["10", t("10 лет")]], "0");
+      var names = h("input", { type: "text", placeholder: t("дополнительные имена через пробел, например test.school.local"), style: { width: "100%" } });
+      var newca = h("input", { type: "checkbox" });
+      var en = h("input", { type: "checkbox" });
+      en.checked = !!D.enabled; en.disabled = !D.has_server;
+      en.onchange = function () {
+        api("POST", "/api/https/enable", { enabled: en.checked }).then(function () { ST.toast(en.checked ? t("HTTPS включён на порту") + " " + D.port : t("HTTPS отключён")); A.render(); }).catch(A.err);
+      };
+      var nu = function (v) { return v === "unlimited" ? t("бессрочно") : v; };
+      var info = D.has_server ? h("div", null,
+        h("div", null, t("Корневой сертификат школы") + ": ", h("b", null, D.ca ? D.ca.subject : "—"), D.ca ? " · " + t("действует до") + " " + nu(D.ca.not_after) : ""),
+        h("div", null, t("Сертификат сервера") + ": " + D.server.dns.join(", ") + " · " + t("до") + " " + nu(D.server.not_after)),
+        D.server.covers_host ? null : h("div", { class: "warnbox" }, t("В сертификате нет имени этого компьютера") + " (" + D.host + ") — " + t("выпустите сертификат заново.")),
+        D.server.expired ? h("div", { class: "warnbox" }, t("Срок действия сертификата истёк.")) : null,
+        D.ca ? h("div", { class: "muted", style: { fontFamily: mono.fontFamily, fontSize: "11px", wordBreak: "break-all" } }, "SHA-256: " + D.ca.sha256) : null)
+        : h("div", { class: "muted" }, t("Сертификат ещё не создан."));
+      var gen = h("button", { class: "pri", onclick: function () {
+        var go = function () {
+          ST.toast(t("Создание ключей — подождите несколько секунд…"));
+          api("POST", "/api/https/generate", { years: +years.value, names: names.value, new_ca: newca.checked }, { timeout: 120000 })
+            .then(function () { ST.toast(t("Сертификат создан")); A.render(); }).catch(A.err);
+        };
+        if (D.has_ca && newca.checked) ST.confirm(t("Новый корневой сертификат"), t("Его придётся заново установить на всех компьютерах. Продолжить?")).then(function (ok) { if (ok) go(); });
+        else go();
+      } }, D.has_server ? t("Перевыпустить сертификат") : t("Создать сертификат"));
+      box.appendChild(h("div", { class: "card" }, h("h2", { style: { marginTop: 0 } }, t("Сертификат безопасности (HTTPS)")),
+        h("div", { class: "muted" }, t("Программа создаёт собственный корневой сертификат школы и сертификат сервера для адреса") + " https://" + host + ":" + D.port + ". " +
+          t("Тот же комплект можно импортировать в SchoolGrade (на этот же или другой сервер школы).")),
+        info,
+        h("div", { class: "bar" }, h("label", null, t("Срок действия") + " "), years,
+          h("label", { style: { marginLeft: "10px" } }, newca, " " + t("Создать новый корневой сертификат (потребует повторной установки на всех ПК)"))),
+        h("div", { style: { margin: "6px 0" } }, names),
+        h("div", { class: "bar" }, gen, h("label", { style: { marginLeft: "10px" } }, en, " " + t("Включить HTTPS")))));
+      box.appendChild(h("div", { class: "card" }, h("h2", { style: { marginTop: 0 } }, t("Установка на компьютеры школы")),
+        h("ol", null,
+          h("li", null, t("Скачайте корневой сертификат") + ": ", h("a", { href: "/ca.cer" }, "schoolca.cer"), " (" + t("или откройте") + " http://" + host + ":" + D.port + "/ca.cer " + t("на нужном ПК") + ")."),
+          h("li", null, t("Откройте файл → «Установить сертификат» → «Локальный компьютер» → «Поместить в следующее хранилище» → «Доверенные корневые центры сертификации».")),
+          h("li", null, t("Перезапустите браузер и откройте") + " https://" + host + ":" + D.port + ". " + t("Для массовой установки используйте install_ca.bat из комплекта экспорта (от имени администратора) или групповую политику."))),
+        h("div", { class: "muted" }, t("Устанавливайте только schoolca.cer. Закрытые ключи (*.key) никому не передавайте."))));
+      box.appendChild(h("div", { class: "card" }, h("h2", { style: { marginTop: 0 } }, t("Экспорт и импорт")),
+        h("div", { class: "muted" }, t("Комплект (ZIP) подходит для SchoolTest и SchoolGrade: корневой сертификат, сертификат сервера и ключи. При импорте на другой компьютер сертификат сервера выпускается заново для его имени из того же корневого — на компьютерах пользователей ничего переустанавливать не нужно. Можно импортировать и собственный сертификат: файлы .crt/.pem + .key.")),
+        h("div", { class: "bar" },
+          h("button", { disabled: !D.has_server, onclick: function () { ST.download("/api/https/export?keys=1"); } }, t("Экспорт с ключами (в тайне!)")),
+          h("button", { disabled: !D.has_server, onclick: function () { ST.download("/api/https/export?keys=0"); } }, t("Экспорт без ключей")),
+          h("button", { onclick: function () {
+            ST.pickFiles(".zip,.crt,.cer,.pem,.key", true).then(function (fs) {
+              if (!fs.length) return;
+              return Promise.all(fs.map(function (f) { return ST.readFile(f); })).then(function (list) {
+                return api("POST", "/api/https/import", { files: list.map(function (x) { return { name: x.name, data: x.data }; }) }, { timeout: 120000 });
+              }).then(function (r) { ST.toast(t("Сертификат импортирован") + ((r.warnings || []).length ? ". " + r.warnings.join(" ") : "")); A.render(); });
+            }).catch(A.err);
+          } }, t("Импорт…")),
+          D.has_server ? h("button", { class: "danger", onclick: function () {
+            ST.confirm(t("Удалить сертификат?"), t("Сертификат будет удалён с этого компьютера, HTTPS отключится."), t("Удалить"), true).then(function (ok) {
+              if (ok) api("DELETE", "/api/https").then(A.render).catch(A.err);
+            });
+          } }, t("Удалить")) : null)));
+    });
+  });
+
   /* ---------------- резервные копии ---------------- */
   A.route("backup", function (box) {
     if (!A.isAdmin()) {
@@ -305,6 +375,11 @@
       [t("Списки"), t("Администратор добавляет списки (вручную, вставкой, из таблицы Excel/CSV или из SchoolGrade) и учётные записи учителей, психологов и других администраторов.")],
       [t("Учебный год"), t("В конце года администратор переводит учащихся: «Учебные годы» → «Перевести на следующий год…». Прошлые годы выбираются в левой панели — там сохраняются классы, тесты и отметки.")],
       [t("Адрес программы"), t("Устройства учеников открывают адрес программы в браузере. Он показан в окне SchoolTest на компьютере учителя — обычно это http://192.168.1.10:8081 (адрес сети) или http://ИМЯ-КОМПЬЮТЕРА:8081 (имя компьютера учителя, если в сети работает DNS-разрешение имён).")]]],
+    ["net", t("Сеть, HTTPS, служба"), [
+      [t("Адрес по имени компьютера"), t("В окне SchoolTest и в «Администрирование → HTTPS и адрес» первым в списке показан адрес по имени компьютера (http://ИМЯ-КОМПЬЮТЕРА:8081). Он не меняется при смене IP-адреса — сообщите его ученикам.")],
+      [t("Служба Windows"), t("В окне программы отметьте «Запускать как службу Windows (автозагрузка)» и нажмите «Применить» (подтвердите запрос Windows). Сервер будет стартовать вместе с компьютером, до входа пользователя в систему. Пока служба включена, окно нельзя закрыть крестиком: снимите галочку и нажмите «Применить».")],
+      [t("HTTPS-сертификат"), t("«Администрирование → HTTPS и адрес» → «Создать сертификат». По умолчанию он бессрочный, можно выбрать 1, 2, 5 или 10 лет. HTTP и HTTPS работают на одном порту (8081) одновременно. Скачайте корневой сертификат schoolca.cer (адрес /ca.cer) и установите его на компьютеры в «Доверенные корневые центры сертификации» — тогда браузер не будет предупреждать об угрозе.")],
+      [t("Экспорт и импорт сертификата"), t("Комплект (ZIP) подходит и для SchoolGrade: импортируйте его на другом компьютере или в другой программе школы — сертификат сервера будет выпущен заново для имени этого компьютера из того же корневого, поэтому на компьютерах пользователей ничего переустанавливать не нужно. Закрытые ключи (*.key) никому не передавайте.")]]],
     ["tests", t("Тесты"), [
       [t("Создание теста"), t("Создайте тест или загрузите готовый (файл SchoolTest, текст из Word, таблица Excel). Вопросы объединяются в задания; из задания можно выдавать случайные вопросы.")],
       [t("Шкала"), t("В настройках теста выберите шкалу: по проценту выполнения или по нормам оценки (таблица баллов → отметка).")],

@@ -162,7 +162,7 @@
       grid.appendChild(h("button", { type: "button", onclick: function () { res = o[0]; close.click(); } }, h("b", null, o[1]), h("small", null, o[2])));
     });
     body.appendChild(grid);
-    body.appendChild(h("p", { class: "muted small" }, t("Импорт из MyTestX, «Ассистент II» и Moodle появится в следующей версии.")));
+    body.appendChild(h("p", { class: "muted small" }, t("Импорт из MyTestX, «Ассистент II» и Moodle появится в следующей версии (из MyTestX — через экспорт в XML).")));
     var close;
     var p = ST.modal(testId ? t("Добавить вопросы из файла") : t("Импорт теста"), body, [{ text: t("Отмена"), value: null }]);
     close = document.querySelector(".modal .acts button");
