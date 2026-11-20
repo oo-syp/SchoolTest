@@ -17,14 +17,16 @@
     var longest = Math.max.apply(null, scales.map(function (s) { return String(s.name).length; }));
     var rowH = n > 10 ? 22 : 30, labW = Math.min(330, Math.max(120, longest * (n > 10 ? 6.8 : 7.6) + 12)), W = 720, barW = W - labW - 70, H = n * rowH + 24;
     var useCoef = scales.every(function (s) { return s.coef != null; });
-    var mn = useCoef ? 0 : Math.min.apply(null, scales.map(function (s) { return s.min || 0; }));
-    var mx = useCoef ? 1 : Math.max.apply(null, scales.map(function (s) { return s.max || 1; }));
+    var useStd = !useCoef && scales.every(function (s) { return s.std != null; });
+    var mn = useCoef || useStd ? 0 : Math.min.apply(null, scales.map(function (s) { return s.min || 0; }));
+    var mx = useCoef ? 1 : useStd ? 100 : Math.max.apply(null, scales.map(function (s) { return s.max || 1; }));
     var svg = svgEl("svg", { viewBox: "0 0 " + W + " " + H, width: "100%", role: "img", "aria-label": t("Диаграмма шкал"),
                              style: "max-width:" + W + "px;font-family:inherit" });
     var x0 = labW + (mn < 0 ? barW * (-mn) / (mx - mn) : 0);
     function X(v) { return labW + barW * (v - mn) / ((mx - mn) || 1); }
     // сетка
-    var step = mx - mn > 12 ? 4 : mx - mn > 5 ? 2 : (mx - mn) <= 1 ? 0.25 : 1;
+    var span = mx - mn;
+    var step = span > 60 ? 10 : span > 24 ? 5 : span > 12 ? 4 : span > 5 ? 2 : span <= 1 ? 0.25 : 1;
     for (var g = mn; g <= mx + 1e-9; g += step) {
       svg.appendChild(svgEl("line", { x1: X(g), x2: X(g), y1: 4, y2: H - 18, stroke: g === 0 ? "#9aa5ad" : "#e3e7ea", "stroke-width": 1 }));
       svg.appendChild(svgEl("text", { x: X(g), y: H - 4, "text-anchor": "middle", "font-size": 11, fill: "#6b7680" }, String(Math.round(g * 100) / 100).replace(".", ",")));
@@ -32,7 +34,7 @@
     var top = Math.max.apply(null, scales.map(function (s) { return s.value; }));
     scales.forEach(function (s, i) {
       var y = 6 + i * rowH;
-      var v = s.coef != null ? s.coef : s.value;
+      var v = s.coef != null ? s.coef : (useStd ? s.std : s.value);
       var a = Math.min(X(0 < mn ? mn : 0), X(v)), b = Math.max(X(0 < mn ? mn : 0), X(v));
       var col = s.value === top && top > (s.min || 0) ? "#1f7a6d" : (v < 0 ? "#c0563f" : "#5aa89c");
       svg.appendChild(svgEl("text", { x: labW - 8, y: y + rowH * 0.62, "text-anchor": "end", "font-size": n > 10 ? 12 : 14, fill: "#1d2a33" }, s.name));
@@ -77,6 +79,8 @@
       chart.appendChild(eysenckSvg(res));
       chart.appendChild(barsSvg(res.scales));
     } else chart.appendChild(barsSvg(res.method === "ki144" ? res.scales.slice().sort(function (a, b) { return b.value - a.value; }) : res.scales));
+    if ((res.scales || []).length && res.scales.every(function (s) { return s.std != null; }))
+      chart.appendChild(h("div", { class: "muted small" }, t("На диаграмме — стандартные баллы (максимум каждой шкалы приведён к 100), в таблице — сырые.")));
     box.appendChild(chart);
     var tb = h("tbody");
     res.scales.forEach(function (s) {

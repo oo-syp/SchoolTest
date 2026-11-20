@@ -9,6 +9,7 @@
   var pending = {};       // несохранённые ответы: qid → ответ
   var saving = false, saveTimer = null, retryTimer = null, saveFailed = false;
   var tick = null, pingTimer = null, deadline = null, waitTimer = null;
+  var secEnd = null, secBusy = false, secTick = null;   // субтест с отдельным временем (ШТУР-2)
   var TERMS = {
     school: { cls: "класса", list: "Выберите себя в списке класса" },
     vuz: { cls: "группы", list: "Выберите себя в списке группы" },
@@ -21,8 +22,8 @@
   function stored() { try { return JSON.parse(localStorage.getItem("st_cur") || "null"); } catch (e) { return null; } }
 
   function clearTimers() {
-    clearInterval(tick); clearInterval(pingTimer); clearInterval(waitTimer); clearTimeout(retryTimer);
-    tick = pingTimer = waitTimer = retryTimer = null;
+    clearInterval(tick); clearInterval(pingTimer); clearInterval(waitTimer); clearTimeout(retryTimer); clearInterval(secTick);
+    tick = pingTimer = waitTimer = retryTimer = secTick = null;
   }
 
   /* ---------------- шапка ---------------- */
@@ -60,7 +61,12 @@
       if (c.length !== 6) { err.textContent = t("Код теста — 6 цифр"); inp.focus(); return; }
       btn.disabled = true;
       api("POST", "/api/s/join", { code: c }).then(function (r) { screenStudents(c, r); })
-        .catch(function (e2) { err.textContent = e2.message; btn.disabled = false; });
+        .catch(function (e2) {
+          if (e2.status === 404) {
+            api("POST", "/api/sv/join", { code: c }).then(function (sv) { screenSurvey(c, sv); })
+              .catch(function () { err.textContent = e2.message; btn.disabled = false; });
+          } else { err.textContent = e2.message; btn.disabled = false; }
+        });
     } },
       h("h1", null, t("Вход в тест")),
       h("p", null, t("Введите код, который показал учитель")),
@@ -116,6 +122,63 @@
       h("h2", null, t(terms.list)), q, err, grid));
   }
 
+  /* ---------------- анкета (конструктор анкет, 1.3) ---------------- */
+  function screenSurvey(code, sv) {
+    clearTimers();
+    rerender = function () { screenSurvey(code, sv); };
+    var answers = {};
+    var nameInput = sv.audience !== "anon" ? h("input", { type: "text", placeholder: t("Фамилия Имя"), style: { width: "100%" } }) : null;
+    var err = h("div", { class: "err", role: "alert" });
+    var qlist = h("div", { class: "wrap" });
+    sv.items.forEach(function (q) {
+      var qid = String(q.id);
+      var field;
+      if (q.type === "open") {
+        field = h("textarea", { rows: 3, style: { width: "100%" }, oninput: function (e) { answers[qid] = e.target.value; } });
+      } else if (q.type === "multi") {
+        var cur = [];
+        field = h("div", null, (q.options || []).map(function (o) {
+          var cb = h("input", { type: "checkbox" });
+          cb.addEventListener("change", function () {
+            if (cb.checked) cur.push(o.id); else cur = cur.filter(function (x) { return x !== o.id; });
+            answers[qid] = cur.slice();
+          });
+          return h("label", { class: "chk" }, cb, h("span", null, o.text));
+        }));
+      } else {
+        field = h("div", null, (q.options || []).map(function (o) {
+          var rb = h("input", { type: "radio", name: "sq" + qid });
+          rb.addEventListener("change", function () { answers[qid] = o.id; });
+          return h("label", { class: "chk" }, rb, h("span", null, o.text));
+        }));
+      }
+      qlist.appendChild(h("div", { class: "qcard" }, h("div", { class: "rvhead" }, h("b", null, q.text),
+        q.required ? h("span", { class: "pill" }, t("обязательно")) : null), field));
+    });
+    var btn = h("button", { class: "pri", onclick: function () {
+      btn.disabled = true;
+      api("POST", "/api/sv/" + sv.run_id + "/submit", { respondent: nameInput ? nameInput.value : "", answers: answers })
+        .then(function () { screenSurveyDone(); })
+        .catch(function (e) { err.textContent = e.message; btn.disabled = false; });
+    } }, t("Отправить"));
+    app.innerHTML = "";
+    app.appendChild(topbar(h("button", { class: "sm", onclick: function () { screenCode(); } }, "← " + t("Другой код"))));
+    app.appendChild(h("div", { class: "wrap" },
+      h("div", { class: "who-head" }, h("h1", null, sv.title), sv.description ? h("div", { class: "muted" }, sv.description) : null),
+      nameInput ? h("div", { class: "qcard" }, h("label", null, h("div", null, t("Ваше имя")), nameInput)) : null));
+    app.appendChild(qlist);
+    app.appendChild(h("div", { class: "wrap" }, err, btn));
+  }
+
+  function screenSurveyDone() {
+    rerender = screenSurveyDone;
+    app.innerHTML = "";
+    app.appendChild(topbar());
+    app.appendChild(h("div", { class: "wrap" }, h("div", { class: "result" }, h("h1", null, t("Спасибо!")),
+      h("p", null, t("Ваши ответы сохранены.")),
+      h("p", null, h("button", { onclick: function () { screenCode(); } }, t("Выйти"))))));
+  }
+
   /* ---------------- ожидание разрешения учителя ---------------- */
   function screenWaiting(aid, name) {
     clearTimers();
@@ -152,8 +215,37 @@
     else if (cur >= st.total || cur < 0 || !S._seen) cur = st.cur || 0;
     S._seen = true;
     deadline = st.time_left != null ? Date.now() + st.time_left * 1000 : null;
+    secEnd = (st.psy && st.psy.sec_left != null) ? Date.now() + st.psy.sec_left * 1000 : null;
+    if (secs()) {
+      var av = secList();
+      if (!av.length || st.psy.sec_left === 0) cur = -1;    // субтест не начат или его время вышло
+      else if (av.indexOf(cur) < 0) cur = av[0];
+    }
     screenTest();
     startTimers();
+  }
+
+  /* субтест закончился: показываем описание следующего, время ещё не идёт */
+  function endSection() {
+    if (secBusy || cur < 0) return;
+    secBusy = true;
+    flush().catch(function () {}).then(function () {
+      secBusy = false;
+      secEnd = null;
+      clearInterval(secTick);
+      secTick = null;
+      cur = -1;
+      drawQuestion();
+    });
+  }
+
+  function nextSection() {
+    if (secBusy) return;
+    secBusy = true;
+    flush().then(function () {
+      return api("POST", "/api/s/a/" + S.attempt_id + "/section", { sec: secNow() + 1 });
+    }).then(function (st) { secBusy = false; cur = -1; applyState(st); })
+      .catch(function (e) { secBusy = false; if (e.code === "finished") loadState(S.attempt_id); else ST.toast(e.message, true); });
   }
 
   function qAt(i) {
@@ -180,9 +272,20 @@
       case "essay": return !!String(r.text || "").trim();
       case "file": return !!r.file_id;
       case "code": return !!r.subs;
-      case "psy": return r.choice != null && r.choice !== "";
+      case "psy":
+        if (q.multi) return !!(r.choices && r.choices.length);
+        if (q.input) return !!String(r.text || "").trim();
+        return r.choice != null && r.choice !== "";
     }
     return false;
+  }
+
+  /* субтесты с отдельным временем (ШТУР-2) */
+  function secs() { return (S.psy && S.psy.sections) || null; }
+  function secNow() { return secs() ? (S.psy.sec || 0) : 0; }
+  function secInfo() { var a = secs(); return a && secNow() > 0 ? a[secNow() - 1] : null; }
+  function secList() {
+    return S.questions.slice().sort(function (a, b) { return a.index - b.index; }).map(function (q) { return q.index; });
   }
 
   var body, saveEl, navEl, timerEl;
@@ -208,8 +311,77 @@
     drawQuestion();
   }
 
+  function secExample(txt) {
+    var box = h("div", { class: "secex" });
+    String(txt).split("\n").forEach(function (line) {
+      var m = /^@(\S+)$/.exec(line.trim());
+      if (m) box.appendChild(h("img", { src: "/psy/shtur/" + m[1] + ".png", alt: t("Пример"), loading: "lazy" }));
+      else box.appendChild(h("div", null, line));
+    });
+    return box;
+  }
+
+  function drawSectionIntro() {
+    var all = secs(), n = secNow(), nxt = all[n] || null;
+    body.innerHTML = "";
+    if (!nxt) {
+      body.appendChild(h("div", { class: "secbox" }, h("h2", null, t("Все субтесты выполнены")),
+        h("p", null, t("Нажмите «Завершить», чтобы отправить работу психологу.")),
+        h("button", { class: "pri", onclick: nextSection }, t("Завершить"))));
+      window.scrollTo(0, 0);
+      return;
+    }
+    var box = h("div", { class: "secbox" },
+      h("div", { class: "muted small" }, ST.tf("Субтест {0} из {1}", n + 1, all.length)),
+      h("h2", null, nxt.title),
+      h("p", null, nxt.instruction),
+      h("div", { class: "muted small" }, ST.tf("Заданий: {0}", nxt.count) +
+        (nxt.minutes ? " · " + ST.tf("время: {0} мин", nxt.minutes) : "")));
+    (nxt.examples || []).forEach(function (e, i) {
+      box.appendChild(h("div", { class: "muted small" }, ST.tf("Пример {0}", i + 1)));
+      box.appendChild(secExample(e));
+    });
+    box.appendChild(h("p", { class: "hint" }, nxt.minutes
+      ? t("Время пойдёт сразу после нажатия кнопки. Когда оно закончится, субтест закроется, и вернуться к нему будет нельзя.")
+      : t("Вернуться к этому субтесту после его завершения будет нельзя.")));
+    box.appendChild(h("button", { class: "pri", onclick: nextSection }, t("Начать субтест") + " →"));
+    body.appendChild(box);
+    window.scrollTo(0, 0);
+  }
+
+  function drawSecTimer() {
+    var el = navEl && navEl.querySelector(".sectimer");
+    if (!el) return;
+    if (secEnd == null) { el.textContent = ""; return; }
+    var left = Math.max(0, Math.round((secEnd - Date.now()) / 1000));
+    el.textContent = t("Осталось") + " " + Math.floor(left / 60) + ":" + ("0" + (left % 60)).slice(-2);
+    el.classList.toggle("low", left <= 30);
+    if (left <= 0 && !secBusy) endSection();
+  }
+
   function drawNav() {
     navEl.innerHTML = "";
+    if (secs()) {
+      var all = secs(), n = secNow(), av = secList(), info = secInfo();
+      navEl.appendChild(h("div", { style: { flex: 1 } },
+        h("div", { class: "secmeta" },
+          h("span", { class: "muted small" }, (cur >= 0 && info) ? info.title : t("Описание субтеста")),
+          h("span", { class: "sp", style: { flex: 1 } }),
+          h("span", { class: "sectimer" })),
+        h("div", { class: "progress" }, h("i", { style: { width: (100 * Math.max(0, cur < 0 ? n : n - 1) / all.length) + "%" } }))));
+      if (cur >= 0 && av.length) {
+        var btns = h("div", { class: "navq", style: { padding: 0, marginTop: "6px" } });
+        av.forEach(function (i) {
+          var q = qAt(i);
+          var cls = (i === cur ? "cur" : "") + (q && isAnswered(q.id) ? " ans" : "");
+          btns.appendChild(h("button", { type: "button", class: cls.trim() || null,
+                                         onclick: function () { go(i); } }, String(i + 1)));
+        });
+        navEl.appendChild(btns);
+      }
+      drawSecTimer();
+      return;
+    }
     if (S.psy) {        // методика: вместо 57–144 кнопок — полоса прогресса
       navEl.appendChild(h("div", { style: { flex: 1 } },
         h("div", { class: "muted small" }, ST.tf("Отвечено: {0} из {1}", S.answered.length, S.total)),
@@ -234,6 +406,7 @@
 
   function drawQuestion() {
     drawNav();
+    if (secs() && (secNow() === 0 || cur < 0 || !qAt(cur))) { drawSectionIntro(); return; }
     var q = qAt(cur);
     body.innerHTML = "";
     if (!q) { body.appendChild(h("div", { class: "qcard" }, t("Вопрос не найден"))); return; }
@@ -247,7 +420,8 @@
         updNavBtn(q);
         updFoot(q);
       },
-      onAutoNext: q.type === "psy" ? function () { if (cur < S.total - 1 && qAt(cur) === q) go(cur + 1); else updFoot(q); } : null,
+      hideOption: (S.psy && S.psy.self) ? function (o) { return String(o.id) === String(S.psy.self); } : null,
+      onAutoNext: (q.type === "psy" && !q.multi) ? function () { if (qAt(cur) === q) step(1); else updFoot(q); } : null,
       draftKey: S.attempt_id,
       onSubmit: function (qq, lang, code) { return api("POST", "/api/s/a/" + S.attempt_id + "/submit", { qid: qq.id, lang: lang, code: code }); },
       loadSubs: function (qq) { return api("GET", "/api/s/a/" + S.attempt_id + "/subs?qid=" + encodeURIComponent(qq.id)); },
@@ -267,12 +441,19 @@
     var foot = h("div", { class: "qfoot" });
     if (S.psy) {
       var answeredAny = S.answered.length > 0;
-      body.appendChild(h("details", { class: "psy-intro", open: !answeredAny || null }, h("summary", null, S.psy.name + " — " + t("инструкция")),
-        h("p", { style: { marginBottom: 0 } }, S.psy.instruction)));
+      var si = secs() ? secInfo() : null;
+      body.appendChild(h("details", { class: "psy-intro", open: (!secs() && !answeredAny) || null },
+        h("summary", null, (si ? si.title : S.psy.name) + " — " + t("инструкция")),
+        h("p", { style: { marginBottom: 0 } }, si ? si.instruction : S.psy.instruction)));
     }
+    var numTxt;
+    if (secs()) {
+      var av0 = secList(), info0 = secInfo();
+      numTxt = ST.tf("Задание {0} из {1}", av0.indexOf(cur) + 1, av0.length) + (info0 ? " · " + info0.title : "");
+    } else numTxt = ST.tf(S.psy ? "{0} из {1}" : "Вопрос {0} из {1}", cur + 1, S.total);
     var card = h("div", { class: "qcard" + (q.type === "code" ? " code-wide" : "") },
-      h("div", { class: "qnum" }, h("b", null, ST.tf(S.psy ? "{0} из {1}" : "Вопрос {0} из {1}", cur + 1, S.total)),
-        h("span", null, t(ST.TYPE_NAMES[q.type] || ""))),
+      h("div", { class: "qnum" }, h("b", null, numTxt),
+        h("span", null, secs() ? "" : t(ST.TYPE_NAMES[q.type] || ""))),
       el, foot);
     body.appendChild(card);
     updFoot(q);
@@ -280,16 +461,37 @@
   }
 
   function updNavBtn(q) {
-    if (S.psy) { drawNav(); return; }
+    if (S.psy || secs()) { drawNav(); return; }
     if (!S.free_nav) return;
     var b = navEl.children[cur];
     if (b) b.classList.toggle("ans", isAnswered(q.id));
+  }
+
+  /* шаг вперёд/назад с учётом субтеста */
+  function step(d) {
+    if (secs()) {
+      var av = secList(), k = av.indexOf(cur);
+      if (k < 0) return;
+      if (k + d < 0) return;
+      if (k + d >= av.length) { if (d > 0) endSection(); return; }
+      go(av[k + d]);
+      return;
+    }
+    if (cur + d >= 0 && cur + d < S.total) go(cur + d);
   }
 
   function updFoot(q) {
     var foot = body.querySelector(".qfoot");
     if (!foot) return;
     foot.innerHTML = "";
+    if (secs()) {
+      var av = secList(), k = av.indexOf(cur), lastInSec = k >= av.length - 1;
+      foot.appendChild(h("button", { type: "button", disabled: k <= 0 || null, onclick: function () { step(-1); } }, "← " + t("Назад")));
+      foot.appendChild(h("div", { class: "sp" }));
+      foot.appendChild(h("button", { type: "button", class: "pri", onclick: function () { step(1); } },
+        lastInSec ? t("Закончить субтест") + " →" : (isAnswered(q.id) ? t("Далее") + " →" : t("Пропустить") + " →")));
+      return;
+    }
     var last = cur >= S.total - 1;
     if (S.free_nav) {
       foot.appendChild(h("button", { type: "button", disabled: cur === 0 || null, onclick: function () { go(cur - 1); } }, "← " + t("Назад")));
@@ -392,6 +594,7 @@
   function startTimers() {
     clearTimers();
     if (deadline) tick = setInterval(drawTimer, 500);
+    if (secEnd != null) secTick = setInterval(drawSecTimer, 500);
     pingTimer = setInterval(function () {
       api("POST", "/api/s/a/" + S.attempt_id + "/ping", {}).then(function (r) {
         if (r.status !== "active") return loadState(S.attempt_id);
@@ -431,6 +634,16 @@
 
   /* ---------------- завершение ---------------- */
   function askFinish() {
+    if (secs()) {
+      ST.confirm(t("Завершение методики"), t("Оставшиеся субтесты выполнены не будут, вернуться к ним нельзя. Завершить?"), t("Завершить"))
+        .then(function (ok) {
+          if (!ok) return;
+          flush().catch(function () {}).then(function () {
+            return api("POST", "/api/s/a/" + S.attempt_id + "/finish", {}).then(applyState);
+          }).catch(handleErr);
+        });
+      return;
+    }
     var missing = [];
     for (var i = 0; i < S.total; i++) {
       var q = qAt(i);

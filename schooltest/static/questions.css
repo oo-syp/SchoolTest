@@ -119,11 +119,29 @@ tr.subdet td{background:#fafbfc;white-space:normal}
 .tchip.bad{background:var(--bad-soft)}
 .ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:#9a6500}
 .hidden{display:none!important}
-/* 1.1: методики */
-.psy-opts{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}
-.psy-opts.col{flex-direction:column}
-.psy-opt{flex:1;min-width:160px;min-height:56px;padding:14px 18px;font-size:17px;text-align:left;border:2px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;line-height:1.35}
-.psy-opts:not(.col) .psy-opt{text-align:center}
+/* 1.1: методики, 1.2: картинки, свободный ответ, субтесты */
+.psy-opts{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;align-items:stretch}
+.psy-opts.col{flex-direction:column;align-items:stretch}
+.psy-opt{flex:1 1 240px;min-width:0;max-width:100%;min-height:56px;padding:14px 18px;font-size:17px;text-align:left;
+  border:2px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;line-height:1.35;
+  display:flex;align-items:center;justify-content:flex-start;gap:0;
+  white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.psy-opts.col .psy-opt{flex:0 0 auto}
+.psy-opts.compact{flex-direction:row;flex-wrap:wrap}
+.psy-opts.compact .psy-opt{flex:0 0 auto;min-width:92px;justify-content:center;text-align:center;font-weight:600;font-size:18px}
+.psy-opts:not(.col) .psy-opt{text-align:center;justify-content:center}
+@media (max-width:560px){.psy-opt{flex:1 1 100%;font-size:16px;padding:12px 14px}}
+.psy-img{display:block;max-width:100%;height:auto;margin:10px 0;border:1px solid var(--line);border-radius:8px;background:#fff}
+.psy-input{margin-top:10px}
+.psy-text{font-size:18px;padding:12px 14px;min-width:260px;max-width:100%}
+.psy-left{margin-top:8px}
+.secbox{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:14px}
+.secbox h2{margin-top:0}
+.secbox .secex{background:#f7faf9;border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0;white-space:pre-wrap}
+.secbox .secex img{display:block;max-width:100%;height:auto;margin:6px 0}
+.secmeta{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+.sectimer{font-weight:600;font-variant-numeric:tabular-nums}
+.sectimer.low{color:var(--bad)}
 .psy-opt:hover{border-color:#9cc9c3}
 .psy-opt.on{border-color:var(--accent);background:var(--sel);font-weight:600}
 table.subt,table.subs{border-collapse:collapse;width:100%;background:#fff}

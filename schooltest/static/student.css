@@ -67,3 +67,7 @@ body{background:linear-gradient(180deg,#e6efee 0,#f2f5f5 240px)}
 .psy-intro summary{cursor:pointer;font-weight:600}
 .qcard.code-wide{max-width:none}
 .psy-res .t{width:100%}
+
+/* Анкеты (1.3): варианты ответа как в приложении учителя */
+label.chk{display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:5px 0}
+label.chk input{margin-top:3px;accent-color:var(--brand2,var(--brand))}

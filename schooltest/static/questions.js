@@ -363,11 +363,48 @@
 
   /* ---------------- вопрос методики (психодиагностика): крупные кнопки, переход дальше после ответа ---------------- */
   RENDER.psy = function (q, resp, body, ctx, changed, ro) {
-    var list = h("div", { class: "psy-opts" + (q.options.length > 2 ? " col" : "") });
-    q.options.forEach(function (o) {
-      var b = h("button", { type: "button", class: "psy-opt" + (resp.choice === o.id ? " on" : ""), disabled: ro || null,
-                            "aria-pressed": resp.choice === o.id ? "true" : "false" }, o.text);
+    if (q.hint) body.appendChild(h("div", { class: "hint" }, q.hint));
+    if (q.image) body.appendChild(h("img", { class: "psy-img", src: q.image, alt: t("Рисунок к заданию"), loading: "lazy" }));
+    if (q.input) {                      // свободный ответ (ШТУР: обобщения, числовые ряды)
+      var inp = h("input", { class: "psy-text", type: "text", value: resp.text || "", disabled: ro || null,
+                             inputmode: q.input === "number" ? "numeric" : null, autocomplete: "off",
+                             maxlength: q.input === "number" ? 12 : 120,
+                             placeholder: q.input === "number" ? t("Число") : t("Ответ") });
+      inp.addEventListener("input", function () { resp.text = inp.value; changed(); });
+      inp.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && ctx.onAutoNext && String(inp.value).trim()) { e.preventDefault(); ctx.onAutoNext(); }
+      });
+      body.appendChild(h("div", { class: "psy-input" }, inp));
+      return;
+    }
+    var multi = !!q.multi, mx = q.max || 0;
+    if (multi && !Array.isArray(resp.choices)) resp.choices = [];
+    var opts = q.options.filter(function (o) { return !(ctx.hideOption && ctx.hideOption(o)); });
+    var compact = opts.length > 2 && opts.every(function (o) { return String(o.text || "").length <= 2; });
+    var list = h("div", { class: "psy-opts" + ((multi || opts.length > 2) ? " col" : "") + (compact ? " compact" : "") });
+    var left = multi ? h("div", { class: "hint psy-left" }) : null;
+    function on(o) { return multi ? resp.choices.indexOf(o.id) >= 0 : resp.choice === o.id; }
+    function updLeft() {
+      if (!left) return;
+      left.textContent = mx ? ST.tf("Выбрано {0} из {1}", resp.choices.length, mx) : ST.tf("Выбрано: {0}", resp.choices.length);
+    }
+    opts.forEach(function (o) {
+      var b = h("button", { type: "button", class: "psy-opt" + (on(o) ? " on" : ""), disabled: ro || null,
+                            "aria-pressed": on(o) ? "true" : "false" }, o.text);
       b.addEventListener("click", function () {
+        if (multi) {
+          var i = resp.choices.indexOf(o.id);
+          if (i >= 0) resp.choices.splice(i, 1);
+          else {
+            if (mx && resp.choices.length >= mx) { ST.toast(ST.tf("Можно выбрать не больше {0}", mx), true); return; }
+            resp.choices.push(o.id);
+          }
+          b.classList.toggle("on", on(o));
+          b.setAttribute("aria-pressed", on(o) ? "true" : "false");
+          updLeft();
+          changed();
+          return;
+        }
         resp.choice = o.id;
         list.querySelectorAll(".psy-opt").forEach(function (x) { x.classList.remove("on"); x.setAttribute("aria-pressed", "false"); });
         b.classList.add("on");
@@ -377,6 +414,7 @@
       });
       list.appendChild(b);
     });
+    if (left) { updLeft(); body.appendChild(left); }
     body.appendChild(list);
   };
 
