@@ -43,7 +43,22 @@
   /* ---------------- список тестов ---------------- */
   A.route("tests", function (box, args, q) {
     var arch = q.archived === "1";
+    var view = "tiles";
+    try { view = localStorage.getItem("st_tests_view") || "tiles"; } catch (e) { }
+    if (["tiles", "compact", "list"].indexOf(view) < 0) view = "tiles";
+    var vsw = h("div", { class: "vswitch" });
+    function drawSwitch() {
+      vsw.innerHTML = "";
+      [["tiles", "\u25A6", t("Плитки")], ["compact", "\u25A4", t("Компактные плитки")], ["list", "\u2630", t("Список")]].forEach(function (v) {
+        vsw.appendChild(h("button", { class: view === v[0] ? "on" : "", title: v[2], onclick: function () {
+          view = v[0]; try { localStorage.setItem("st_tests_view", view); } catch (e) { }
+          drawSwitch(); if (box._draw) box._draw();
+        } }, v[1]));
+      });
+    }
+    drawSwitch();
     A.head(box, arch ? t("Архив тестов") : t("Тесты"), A.isAdmin() ? t("Администратор видит тесты всех пользователей") : null, [
+      vsw,
       h("button", { class: "pri", onclick: newTest }, "\uFF0B " + t("Создать тест")),
       h("button", { onclick: importDialog }, "\u2B06 " + t("Импорт теста"))]);
     var search = h("input", { type: "search", placeholder: t("Поиск по названию или предмету"), style: { minWidth: "260px" } });
@@ -89,7 +104,8 @@
             h("div", null, h("p", null, t("Тестов пока нет.")), h("p", null, t("Создайте тест вручную или загрузите готовый: файл SchoolTest, текст из Word, таблицу Excel.")))));
           return;
         }
-        var grid = h("div", { class: "tlist" });
+        if (view === "list") { list.appendChild(rowsView(rows)); return; }
+        var grid = h("div", { class: "tlist" + (view === "compact" ? " compact" : "") });
         rows.forEach(function (x) {
           var scale = x.settings.scale || {};
           var isFav = !!favSet[String(x.id)];
@@ -124,6 +140,28 @@
         });
         list.appendChild(grid);
       }
+      function rowsView(rows) {
+        var tb = h("tbody");
+        rows.forEach(function (x) {
+          var isFav = !!favSet[String(x.id)];
+          tb.appendChild(h("tr", null,
+            h("td", null, h("button", { class: "star" + (isFav ? " on" : ""), title: t("Закрепить"), onclick: function () {
+              api("POST", "/api/favorites/toggle", { kind: "test", ref: String(x.id) }).then(function (r) {
+                if (r.favorite) favSet[String(x.id)] = true; else delete favSet[String(x.id)];
+                draw();
+              }).catch(A.err);
+            } }, isFav ? "\u2605" : "\u2606")),
+            h("td", { class: "nm", onclick: function () { A.go("#/test/" + x.id); } }, x.title),
+            h("td", null, x.subject || ""), h("td", null, x.grade || ""), h("td", null, x.questions),
+            h("td", { class: "act" },
+              h("button", { class: "sm pri", disabled: !x.questions || null, onclick: function () { A.startRun(x.id); } }, "\u25B6 " + t("Провести")), " ",
+              h("button", { class: "sm", onclick: function () { A.go("#/test/" + x.id); } }, x.mine || A.isAdmin() ? t("Изменить") : t("Открыть")), " ",
+              h("button", { class: "sm", onclick: function () { copyTest(x); } }, t("Копия")))));
+        });
+        return h("table", { class: "trows" }, h("thead", null, h("tr", null, h("th"), h("th", null, t("Название")), h("th", null, t("Предмет")),
+          h("th", null, t("Класс")), h("th", null, t("Вопросов")), h("th"))), tb);
+      }
+      box._draw = draw;
       search.addEventListener("input", draw);
       own.addEventListener("change", draw);
       drawSide();
@@ -344,6 +382,8 @@
       var acts = [
         h("button", { class: "pri", disabled: !T.questions || null, onclick: function () { A.startRun(T.id); } }, "▶ " + t("Провести")),
         h("button", { onclick: function () { ST.download("/api/tests/" + T.id + "/export"); } }, "⬇ " + t("Экспорт")),
+        h("button", { class: "ghost", title: t("Условия и ключ для печати; формулы сохраняются"), onclick: function () { ST.download("/api/tests/" + T.id + "/export?format=tex"); } }, "⬇ LaTeX"),
+        h("button", { class: "ghost", onclick: function () { ST.download("/api/tests/" + T.id + "/export?format=md"); } }, "⬇ Markdown"),
         h("button", { onclick: function () { api("POST", "/api/tests/" + T.id + "/copy", {}).then(function (r) { ST.toast(t("Копия создана")); A.go("#/test/" + r.id); }).catch(A.err); } }, t("Копия"))];
       if (edit) acts.push(h("button", { class: "danger", onclick: function () { delTest(T); } }, t("Удалить")));
       A.head(box, T.title, [T.subject, T.grade ? ST.tf("{0} класс", T.grade) : null, !edit ? "👤 " + T.owner : null].filter(Boolean).join(" · "), acts);
@@ -419,6 +459,13 @@
     var rk = A.select(Object.keys(A.me.result_kinds).map(function (k) { return [k, t(A.me.result_kinds[k])]; }), S.result_kind || "mark");
     var pass = h("input", { type: "number", min: 1, max: 100, style: { width: "90px" } }); pass.value = S.pass_percent || 60;
     var tl = h("input", { type: "number", min: 0, max: 600, style: { width: "90px" } }); tl.value = S.time_limit || 0;
+    var bsec = h("input", { type: "number", min: 5, max: 300, style: { width: "90px" } }); bsec.value = S.blitz_seconds || 20;
+    var maxAtt = h("input", { type: "number", min: 1, max: 20, style: { width: "90px" } }); maxAtt.value = S.max_attempts || 1;
+    var retryH = h("input", { type: "number", min: 0, max: 720, step: "any", style: { width: "90px" } }); retryH.value = S.retry_hours || 0;
+    var winFrom = h("input", { type: "datetime-local" }); winFrom.value = (S.window || {}).from || "";
+    var winTo = h("input", { type: "datetime-local" }); winTo.value = (S.window || {}).to || "";
+    var peerCnt = h("input", { type: "number", min: 1, max: 5, style: { width: "90px" } }); peerCnt.value = (S.peer || {}).count || 2;
+    var peerW = h("input", { type: "number", min: 0, max: 100, style: { width: "90px" } }); peerW.value = (S.peer || {}).weight != null ? S.peer.weight : 50;
     var vars = h("input", { type: "number", min: 1, max: 10, style: { width: "90px" } }); vars.value = S.variants || 1;
     var show = A.select([["none", t("Ничего — результат сообщит учитель")], ["mark", t("Только итог (отметку)")],
       ["review", t("Итог и разбор ошибок с правильными ответами")]], S.show_result);
@@ -435,13 +482,22 @@
         normInfo, thrBox),
       h("div", { class: "card" }, h("h2", { style: { marginTop: 0 } }, t("Проведение и защита от списывания")),
         h("div", { class: "form" }, A.field(t("Время на тест, минут (0 — без ограничения)"), tl), A.field(t("Число вариантов"), vars),
-          A.field(t("Что ученик видит после теста"), show, "wide")),
+          A.field(t("Что ученик видит после теста"), show, "wide"),
+          A.field(t("Число попыток на ученика"), maxAtt), A.field(t("Повтор не раньше чем через, часов (24 — сутки)"), retryH),
+          A.field(t("Доступен с (пусто — без ограничения)"), winFrom), A.field(t("Доступен до"), winTo)),
         h("div", { style: { marginTop: "10px" } },
           flag("shuffle_questions", t("Перемешивать вопросы"), t("При шкале по заданиям уровни идут по порядку, а вопросы внутри задания перемешиваются.")),
           flag("shuffle_options", t("Перемешивать варианты ответов")),
           flag("free_nav", t("Можно пропускать вопросы и возвращаться к ним"), t("Если выключено — вопросы проходятся строго по порядку, вернуться нельзя.")),
           flag("track_focus", t("Отмечать уход со страницы (переключение на другую вкладку или окно)")),
-          flag("no_copy", t("Запретить копирование и выделение текста теста")))));
+          flag("no_copy", t("Запретить копирование и выделение текста теста")),
+          A.check(t("Взаимопроверка эссе (после сдачи ученик проверяет работы одноклассников по рубрике)"), (S.peer || {}).enabled, function (v) { S.peer = Object.assign({}, S.peer, { enabled: v }); },
+            t("Работает для вопросов «Свободный ответ» с рубрикой. Итог = среднее оценки учителя и проверенной оценки учеников; оценки «всем максимум» не учитываются.")),
+          h("div", { class: "form", style: { margin: "4px 0 8px 26px" } }, A.field(t("Сколько работ проверяет ученик"), peerCnt), A.field(t("Вес оценки учеников в итоге, %"), peerW)),
+          flag("doubt", t("Кнопка «Сомневаюсь» у каждого вопроса"), t("Ученик может отметить вопрос; отметки видны в отчёте «Сомнения» — даже там, где ответ верный.")),
+          flag("blitz", t("Режим «Блиц-опрос» (как Kahoot!)"), t("Вопросы идут по таймеру, общий экран показывает вопрос и гистограмму выбранных вариантов, в конце — рейтинг. Подходят вопросы «один/несколько ответов», короткие и числовые. Порядок вопросов у всех одинаковый.")),
+          h("div", { class: "form", style: { margin: "4px 0 8px 26px" } }, A.field(t("Секунд на вопрос по умолчанию (можно изменить в вопросе)"), bsec)),
+          flag("show_variant", t("Показывать номер варианта учащемуся"), t("Крупная надпись «Вариант N» в шапке теста — удобно, если часть работы переписывается в тетрадь. Нужно число вариантов больше 1.")))));
     pane.appendChild(form);
     drawScale();
     if (!edit) { form.querySelectorAll("input,select,textarea,button").forEach(function (e) { e.disabled = true; }); return; }
@@ -453,6 +509,11 @@
       S.pass_percent = +pass.value || 60;
       S.time_limit = +tl.value || 0;
       S.variants = +vars.value || 1;
+      S.peer = { enabled: !!(S.peer || {}).enabled, count: Math.max(1, Math.min(5, +peerCnt.value || 2)), weight: Math.max(0, Math.min(100, +peerW.value))};
+      S.max_attempts = Math.max(1, +maxAtt.value || 1);
+      S.retry_hours = Math.max(0, +retryH.value || 0);
+      S.window = { from: winFrom.value || "", to: winTo.value || "" };
+      S.blitz_seconds = Math.max(5, +bsec.value || 20);
       S.show_result = show.value;
       api("PUT", "/api/tests/" + T.id, { title: title.value, subject: subj.value, grade: grade.value ? +grade.value : null,
         description: desc.value, shared: shared.querySelector("input").checked ? 1 : 0, settings: S })
@@ -467,6 +528,8 @@
     var shuffle = function (a) { a = a.slice(); for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var x = a[i]; a[i] = a[j]; a[j] = x; } return a; };
     if (q.type === "single" || q.type === "multi") out.options = b.options;
     if (q.type === "short") out.fields = b.fields;
+    if (q.type === "num") out.unit = (q.answer || {}).unit || "";
+    if (q.type === "matrix") { out.rows = b.rows; out.cols = b.cols; }
     if (q.type === "match") { out.left = b.left; out.right = shuffle(b.right); }
     if (q.type === "order") out.items = shuffle(b.items);
     if (q.type === "chrono") { out.items = shuffle(b.events); out.labels = { start: b.start_label, end: b.end_label }; }
@@ -489,6 +552,8 @@
     switch (q.type) {
       case "single": case "multi": return { options: a.correct || [] };
       case "short": return { fields: first(a.fields) };
+      case "num": return { value: a.formula || "", unit: a.unit || "" };
+      case "matrix": return { cells: a.cells || {} };
       case "match": return { pairs: a.pairs || {} };
       case "order": case "chrono": return { order: a.order || [], dates: a.dates || {} };
       case "cloze": return { blanks: first(a.blanks) };

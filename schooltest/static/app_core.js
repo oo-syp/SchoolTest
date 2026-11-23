@@ -33,7 +33,7 @@ var A = window.A = { routes: {}, me: null };
   A.isSchool = function () { return ((A.me && A.me.settings.org_type) || "school") === "school"; };
   A.isEnterprise = function () { return A.me && A.me.settings.org_type === "enterprise"; };
   A.isAdmin = function () { return A.me && A.me.user.role === "admin"; };
-  A.isPsy = function () { return A.me && (A.me.user.role === "psychologist" || A.me.user.role === "admin"); };
+  A.isPsy = function () { return A.me && (A.me.user.role === "psychologist" || A.me.user.role === "admin" || (A.me.user.roles || "").split(",").indexOf("psychologist") >= 0); };
   /* учебный год: выбранный в боковой панели (по умолчанию — текущий) */
   A.yearId = function () {
     var v = null;

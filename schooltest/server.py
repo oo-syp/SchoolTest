@@ -204,7 +204,7 @@ def make_handler(app):
                 if method != "GET":
                     return self._send(405, "Method not allowed", "text/plain")
                 pub = getattr(app, "public_get", None)      # корневой сертификат (/ca.cer)
-                if pub and path in ("/ca.cer", "/ca.crt"):
+                if pub and (path in ("/ca.cer", "/ca.crt") or path.startswith("/blitz/")):
                     return pub(self, path, url.query)
                 return self._static(path)
             lang = (self.headers.get("X-Lang") or "ru")[:2]

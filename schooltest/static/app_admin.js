@@ -202,7 +202,8 @@
     return api("GET", "/api/users").then(function (us) {
       box.appendChild(A.table([t("ФИО"), t("Логин"), t("Роль"), t("Тестов"), t("Последний вход"), t("Состояние"), ""], us.map(function (u) {
         return h("tr", null, h("td", null, u.full_name), h("td", null, u.login), h("td", null, u.role === "admin" ? t("администратор") :
-          u.role === "psychologist" ? t("педагог-психолог") : A.N("teacher").toLowerCase()),
+          (u.role === "psychologist" ? t("педагог-психолог") : A.N("teacher").toLowerCase()) +
+            ((u.roles || "") ? " + " + (u.roles.split(",").indexOf("psychologist") >= 0 ? t("педагог-психолог") : A.N("teacher").toLowerCase()) : "")),
           h("td", { class: "num" }, String(u.tests)), h("td", null, u.last_login ? A.date(u.last_login, true) : ""),
           h("td", null, u.active ? (u.must_change ? h("span", { class: "pill warn" }, t("ждёт смены пароля")) : h("span", { class: "pill ok" }, t("активен"))) :
             h("span", { class: "pill" }, t("отключён"))),
@@ -226,8 +227,20 @@
     var lg = h("input", { type: "text", disabled: u.id ? true : null }); lg.value = u.login || "";
     var role = A.select([["teacher", A.N("teacher")], ["psychologist", t("Педагог-психолог")], ["admin", t("Администратор")]], u.role || "teacher");
     var act = A.check(t("Может входить"), u.id ? u.active : true);
-    return { el: h("div", null, h("div", { class: "form" }, A.field(t("ФИО"), fn, "wide"), A.field(t("Логин"), lg), A.field(t("Роль"), role)), u.id ? act : null),
-             val: function () { return { full_name: fn.value.trim(), login: lg.value.trim(), role: role.value, active: act.querySelector("input").checked ? 1 : 0 }; } };
+    // 1.5: совмещение ролей «учитель» и «педагог-психолог»
+    var extra = h("input", { type: "checkbox" }), extraLbl = h("span"), extraBox = h("label", { style: { display: "inline-flex", gap: "6px", alignItems: "center" } }, extra, extraLbl);
+    extra.checked = !!(u.roles || "").trim();
+    function syncExtra() {
+      var other = role.value === "teacher" ? t("Педагог-психолог") : t("Учитель");
+      extraLbl.textContent = t("Совмещает роль") + ": " + other;
+      extraBox.style.display = role.value === "admin" ? "none" : "";
+    }
+    role.onchange = syncExtra; syncExtra();
+    return { el: h("div", null, h("div", { class: "form" }, A.field(t("ФИО"), fn, "wide"), A.field(t("Логин"), lg), A.field(t("Роль"), role), A.field(t("Дополнительно"), extraBox)), u.id ? act : null),
+             val: function () {
+               var other = role.value === "teacher" ? "psychologist" : "teacher";
+               return { full_name: fn.value.trim(), login: lg.value.trim(), role: role.value, roles: (extra.checked && role.value !== "admin") ? [other] : [], active: act.querySelector("input").checked ? 1 : 0 };
+             } };
   }
   function addUser() {
     var f = userForm({});
@@ -388,6 +401,13 @@
       [t("Папки"), t("Раздел «Тесты» → кнопка «В папку» у карточки теста: тесты раскладываются по папкам произвольной вложенности (по предметам, классам и т.п.). Папки общие на школу, тест без папки остаётся в «корневой».")],
       [t("Избранное"), t("Звёздочка на карточке теста или методики закрепляет её в «Избранном» — своё у каждого пользователя.")],
       [t("Задачи с кодом"), t("Тип вопроса «Код»: условие, примеры, подзадачи с баллами и тестами (вручную или из ZIP-архива). Ученик пишет программу на разрешённом языке и отправляет её — проверка идёт сразу на компьютере с SchoolTest. Компиляторы — в разделе «Компиляторы».")]]],
+    ["v15", t("Новое в 1.5"), [
+      [t("Блиц-опрос"), t("Настройки теста → «Режим Блиц-опрос». После запуска откройте «Общий экран» (адрес /blitz/КОД/screen) на проекторе, дождитесь учеников и нажмите «Начать игру». Вопросы идут по таймеру сами; после каждого показываются правильный ответ и рейтинг.")],
+      [t("Числовые вопросы с параметрами"), t("Тип «Числовой ответ»: задайте параметры (диапазон и шаг), формулу правильного ответа и допуск. В тексте пишите {s}, {t} — у каждого ученика будут свои числа. Единицы можно игнорировать, дробную часть ученик пишет через запятую или точку.")],
+      [t("Динамика класса"), t("«Проведение и результаты → Динамика класса»: средний результат по тестам и освоение тем. Темы задаются полем «Темы вопроса» в редакторе.")],
+      [t("Матрица, рубрики, взаимопроверка"), t("Матричный вопрос — таблица «строки × столбцы» с галочками. Для эссе добавьте рубрику: критерии оцениваются ползунками. Включите взаимопроверку в настройках теста — ученики после сдачи оценивают работы одноклассников; оценки «всем максимум» не учитываются.")],
+      [t("Попытки и доступ"), t("В настройках теста: число попыток, повтор не раньше чем через N часов (24 — сутки), окно доступа «с … до …». Кнопка «Сомневаюсь» и отчёт «Сомнения» показывают, где класс не уверен в ответах.")],
+      [t("Экспорт в LaTeX и Markdown"), t("На странице теста: кнопки «LaTeX» и «Markdown» — условия и ключ; формулы сохраняются.")]]],
     ["run", t("Проведение"), [
       [t("Запуск"), t("Нажмите «Провести», выберите список. Ученики открывают адрес программы, вводят код и выбирают себя в списке.")],
       [t("Сбой у ученика"), t("Если компьютер ученика завис, он открывает тест на другом устройстве — в наблюдении появится кнопка «Разрешить продолжить». Ответы и таймер сохраняются.")],

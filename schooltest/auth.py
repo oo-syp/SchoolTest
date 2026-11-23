@@ -77,7 +77,7 @@ def session_user(db, token):
         return None
     if now - s["seen"] > 60:
         db.ex("UPDATE sessions SET seen=? WHERE token=?", (now, token))
-    u = db.one("SELECT id, login, full_name, role, active, must_change FROM users WHERE id=?", (s["user_id"],))
+    u = db.one("SELECT id, login, full_name, role, roles, active, must_change FROM users WHERE id=?", (s["user_id"],))
     if not u or not u["active"]:
         return None
     return u
@@ -85,6 +85,15 @@ def session_user(db, token):
 
 def logout(db, token):
     db.ex("DELETE FROM sessions WHERE token=?", (token,))
+
+
+def has_role(u, role):
+    """Роли пользователя: основная (role) + дополнительные (roles, через запятую). Администратору доступно всё."""
+    if not u:
+        return False
+    if u.get("role") == "admin":
+        return True
+    return u.get("role") == role or role in (u.get("roles") or "").split(",")
 
 
 def is_admin(u):

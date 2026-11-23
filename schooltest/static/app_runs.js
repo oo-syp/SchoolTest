@@ -19,6 +19,7 @@
 
   A.route("runs", function (box, args, q) {
     A.head(box, t("Проведение и результаты"), t("Все запуски тестов. Откройте запуск, чтобы наблюдать, проверять и смотреть отчёты."));
+    box.appendChild(A.tabs([["runs", "#/runs", t("Запуски")], ["dyn", "#/dynamics", t("Динамика класса")]], "runs"));
     var st = A.select([["", t("Все")], ["open", t("Идут сейчас")], ["closed", t("Завершённые")]], q.status || "");
     var mine = A.isAdmin() ? A.check(t("Только мои"), q.mine === "1") : null;
     var list = h("div");
@@ -58,14 +59,18 @@
       if (R.mode === "online") tabs.push(["check", "#/run/" + id + "/check", t("Проверка") + (R.pending ? " (" + R.pending + ")" : "")]);
       tabs.push(["results", "#/run/" + id + "/results", t("Результаты")]);
       if (R.mode === "online") tabs.push(["analysis", "#/run/" + id + "/analysis", t("Анализ вопросов")]);
+      if (R.mode === "online" && R.peer) tabs.push(["peer", "#/run/" + id + "/peer", t("Взаимопроверка")]);
+      if (R.mode === "online") tabs.push(["doubts", "#/run/" + id + "/doubts", t("Сомнения")]);
       if (A.isSchool()) tabs.push(["sg", "#/run/" + id + "/sg", t("В журнал SchoolGrade")]);
       box.appendChild(A.tabs(tabs, tab));
       var pane = h("div");
       box.appendChild(pane);
-      if (tab === "monitor") monitor(pane, R);
+      if (tab === "monitor") { blitzPanel(pane, R); monitor(pane, R); }
       else if (tab === "check") return check(pane, R);
       else if (tab === "results") return report(pane, "/api/runs/" + id + "/results");
       else if (tab === "analysis") return report(pane, "/api/runs/" + id + "/analysis");
+      else if (tab === "peer") return report(pane, "/api/runs/" + id + "/peer");
+      else if (tab === "doubts") return report(pane, "/api/runs/" + id + "/doubts");
       else if (tab === "sg") return sgTab(pane, R);
       else if (tab === "paper") return paper(pane, R);
     });
@@ -87,6 +92,45 @@
   function closeRun(R) {
     ST.confirm(t("Завершить тест?"), t("Все, кто ещё проходит тест, будут завершены с текущими ответами. Код перестанет действовать."), t("Завершить"), true)
       .then(function (ok) { if (ok) api("POST", "/api/runs/" + R.id + "/close", {}).then(A.render).catch(A.err); });
+  }
+
+  /* ---------------- блиц-опрос: панель ведущего ---------------- */
+  function blitzPanel(pane, R) {
+    if (R.mode !== "online") return;
+    var box = h("div", { class: "card" });
+    var timer = null;
+    function stop() { if (!document.body.contains(box)) { clearInterval(timer); return true; } return false; }
+    function act(a) { api("POST", "/api/runs/" + R.id + "/blitz", { action: a }).then(draw).catch(A.err); }
+    function draw(S) {
+      box.innerHTML = "";
+      var ph = { lobby: t("Ожидание участников"), countdown: t("Обратный отсчёт"), question: t("Идёт вопрос"), reveal: t("Показ ответа"), done: t("Игра окончена") }[S.phase];
+      var url = location.origin + S.screen;
+      box.appendChild(h("h2", { style: { marginTop: 0 } }, "⚡ " + t("Блиц-опрос")));
+      box.appendChild(h("div", { class: "bar" },
+        h("a", { class: "btn", href: S.screen, target: "_blank" }, "🖥 " + t("Открыть общий экран")),
+        h("span", { class: "muted small" }, url),
+        h("div", { class: "sp" }),
+        S.phase === "lobby" ? h("button", { class: "pri", onclick: function () { act("start"); } }, "▶ " + t("Начать игру")) : null,
+        S.phase === "question" || S.phase === "reveal" ? h("button", { onclick: function () { act("skip"); } }, "⏭ " + t("Дальше")) : null,
+        S.phase !== "lobby" && S.phase !== "done" ? null : (S.phase === "done" ? null : null)));
+      box.appendChild(h("div", null, h("b", null, ph), S.i != null ? " · " + ST.tf("вопрос {0} из {1}", S.i + 1, S.n) : " · " + ST.tf("вопросов: {0}", S.n),
+        " · " + ST.tf("подключилось: {0}", S.players.length)));
+      if (S.phase === "question") box.appendChild(h("div", { class: "muted" }, ST.tf("Ответили: {0} из {1}", S.answered, S.joined)));
+      if (S.skipped && S.skipped.length) box.appendChild(h("div", { class: "muted small" }, ST.tf("Вопросов, не подходящих для блица (пропущены): {0}", S.skipped.length)));
+      if (S.phase === "lobby") box.appendChild(h("div", { class: "muted small" }, t("Ученики входят по коду, как в обычном тесте. Когда все подключились — нажмите «Начать игру»; вопросы идут сами по таймеру.")));
+      if (S.top && (S.phase === "done" || S.phase === "reveal")) {
+        box.appendChild(h("table", { class: "trows" }, S.top.map(function (r) { return h("tr", null, h("td", null, r.place), h("td", null, r.name), h("td", null, r.score)); })));
+      }
+    }
+    function load() {
+      if (stop()) return;
+      api("GET", "/api/runs/" + R.id + "/blitz").then(draw).catch(function () { clearInterval(timer); box.remove(); });
+    }
+    api("GET", "/api/runs/" + R.id + "/blitz").then(function (S) {
+      pane.insertBefore(box, pane.firstChild);
+      draw(S);
+      timer = setInterval(load, 1500);
+    }).catch(function () {});
   }
 
   /* ---------------- наблюдение ---------------- */
@@ -223,14 +267,33 @@
       h("div", { class: "answer-box" }, (it.files && it.files.length) ? it.files.map(function (f) {
         return h("button", { class: "sm", onclick: function () { ST.download("/api/uploads/" + f.id); } }, "⬇ " + f.name + " (" + Math.ceil(f.size / 1024) + " КБ)");
       }) : t("Файл не загружен"));
+    var rub = it.question.type === "essay" && it.question.body.rubric ? it.question.body.rubric : null;
+    var rubVals = Object.assign({}, it.rubric || {});
+    var rubBox = null;
+    if (rub) {
+      var sum = h("b", null);
+      var calc = function () {
+        var tot = 0, mx = 0;
+        rub.forEach(function (c) { tot += +rubVals[c.id] || 0; mx += c.max; });
+        pts.value = mx ? Math.round(it.maxp * tot / mx * 100) / 100 : 0;
+        sum.textContent = A.num(tot) + " / " + A.num(mx) + " → " + A.num(+pts.value) + " " + t("б.");
+      };
+      rubBox = h("div", { class: "rubric" }, rub.map(function (c) {
+        var rg = h("input", { type: "range", min: 0, max: c.max, step: "0.5", value: rubVals[c.id] || 0 });
+        var lab = h("span", { class: "small", style: { minWidth: "34px", display: "inline-block" } }, String(rubVals[c.id] || 0));
+        rg.addEventListener("input", function () { rubVals[c.id] = +rg.value; lab.textContent = rg.value; calc(); });
+        return h("div", { class: "bar" }, h("span", { style: { minWidth: "180px" } }, c.title), rg, lab, h("span", { class: "muted small" }, "/ " + c.max));
+      }), h("div", null, t("Сумма:") + " ", sum));
+      if (it.rubric) calc(); else sum.textContent = "—";
+    }
     function save() {
-      api("PUT", "/api/attempts/" + it.attempt_id + "/grade", { qid: it.qid, points: pts.value, comment: com.value }).then(function (r) {
+      api("PUT", "/api/attempts/" + it.attempt_id + "/grade", { qid: it.qid, points: pts.value, comment: com.value, rubric: rub ? rubVals : undefined }).then(function (r) {
         it._new = pts.value === "" ? null : +pts.value;
         if (onSaved) onSaved();
         saved.textContent = "✓ " + t("сохранено") + (r.mark && !r.pending ? " · " + ST.tf("итог: {0}", r.mark) : "");
       }).catch(A.err);
     }
-    return h("div", { class: "chk-item" }, h("b", null, it.student), it.noContent ? null : content,
+    return h("div", { class: "chk-item" }, h("b", null, it.student), it.noContent ? null : content, rubBox,
       h("div", { class: "gr" }, h("span", null, t("Баллы:")), pts, h("span", { class: "muted" }, ST.tf("из {0}", A.num(it.maxp))),
         it.maxp >= 1 ? h("button", { class: "sm", onclick: function () { pts.value = it.maxp; save(); } }, t("Максимум")) : null,
         h("button", { class: "sm", onclick: function () { pts.value = 0; save(); } }, "0"),
@@ -257,6 +320,7 @@
         } }, t("Сохранить")), h("span", { class: "muted small" }, t("Пусто — отметка по шкале теста."))));
       D.items.forEach(function (it, i) {
         var q = A.toPublic(it.question);
+        if (it.num) { q.text = it.num.text; q.unit = it.num.unit; }
         if (it.order && it.order.options) q.options = sortBy(q.options, it.order.options);
         if (it.order && it.order.items) q.items = sortBy(q.items, it.order.items);
         if (it.order && it.order.right) q.right = sortBy(q.right, it.order.right);
@@ -265,7 +329,7 @@
           got == null ? t("не проверено") : ST.tf("{0} из {1} б.", A.num(got), A.num(it.maxp)));
         var card = h("div", { class: "card" }, h("div", { class: "bar" }, h("b", null, ST.tf("Вопрос {0}", i + 1)),
           h("span", { class: "muted small" }, t(ST.TYPE_NAMES[it.question.type])), h("div", { class: "sp" }), pill),
-          ST.renderQuestion(q, it.response, { readonly: true, review: { correct: A.correctOf(it.question), comment: it.comment },
+          ST.renderQuestion(q, it.response, { readonly: true, review: { correct: it.num ? it.num.correct : A.correctOf(it.question), comment: it.comment },
             fullSubs: true, loadSubs: function (qq) { return api("GET", "/api/attempts/" + D.id + "/subs?qid=" + encodeURIComponent(qq.id)); } }));
         if (it.question.type === "code") card.appendChild(h("div", { class: "bar" }, h("button", { class: "sm", onclick: function () {
           api("POST", "/api/runs/" + D.run.id + "/rejudge", { attempt_id: D.id, qid: String(it.question.id) }).then(function (r) {
@@ -392,6 +456,7 @@
         var q = it.q, k = it.key, a = it.answer;
         if (q.type === "single" || q.type === "multi") return q.options.map(function (o, i) { return k.options.indexOf(o.id) >= 0 ? (i + 1) : null; }).filter(Boolean).join(", ");
         if (q.type === "short") return q.fields.map(function (f) { return (f.label ? esc(f.label) + ": " : "") + esc((a.fields[f.id] || []).join(" / ")); }).join("; ");
+        if (q.type === "num") return esc(String(k.value || "") + (k.unit ? " " + k.unit : ""));
         if (q.type === "match") return q.left.map(function (l, i) { var r = k.pairs[l.id]; var j = q.right.map(function (x) { return x.id; }).indexOf(r); return (i + 1) + "–" + (LET[j] || "?"); }).join(", ");
         if (q.type === "order" || q.type === "chrono") {
           var pos = {}; q.items.forEach(function (x, i) { pos[x.id] = LET[i]; });

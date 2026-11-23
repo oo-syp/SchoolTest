@@ -7,6 +7,8 @@
     single: "Ученик выбирает один вариант",
     multi: "Ученик отмечает все верные варианты",
     short: "Число или слово; несколько полей",
+    num: "Число с допуском; можно задать формулу и диапазоны — у каждого ученика свои числа",
+    matrix: "Таблица строки × столбцы: в каждой ячейке «да/нет»",
     match: "Пары «левое — правое»",
     order: "Расставить элементы по порядку",
     chrono: "События на ленте времени: что раньше, что позже",
@@ -16,7 +18,7 @@
     file: "Ученик загружает файл с решением",
     code: "Задача по программированию: автопроверка на тестах"
   };
-  var TYPES = ["single", "multi", "short", "match", "order", "chrono", "cloze", "likert", "essay", "file", "code"];
+  var TYPES = ["single", "multi", "short", "num", "matrix", "match", "order", "chrono", "cloze", "likert", "essay", "file", "code"];
 
   function normOf(T) {
     var sc = T.settings.scale || {};
@@ -133,11 +135,13 @@
       if (chosen) editQuestion(T, { type: chosen, task_id: taskId, points: defaultPoints(chosen), variant: 0, body: blankBody(chosen), answer: {} });
     });
   }
-  function defaultPoints(ty) { return ty === "likert" ? 0 : ty === "code" ? 10 : (ty === "multi" || ty === "match" || ty === "order" || ty === "chrono" ? 2 : 1); }
+  function defaultPoints(ty) { return ty === "likert" ? 0 : ty === "code" ? 10 : (ty === "multi" || ty === "matrix" || ty === "match" || ty === "order" || ty === "chrono" ? 2 : 1); }
   function blankBody(ty) {
     var b = { text: "", images: [] };
     if (ty === "single" || ty === "multi") b.options = [{ id: "a", text: "" }, { id: "b", text: "" }, { id: "c", text: "" }, { id: "d", text: "" }];
     if (ty === "short") b.fields = [{ id: "f1", label: "" }];
+    if (ty === "num") b.params = [];
+    if (ty === "matrix") { b.rows = [{ id: "r1", text: "" }, { id: "r2", text: "" }]; b.cols = [{ id: "c1", text: t("Да") }, { id: "c2", text: t("Нет") }]; }
     if (ty === "match") { b.left = [{ id: "l1", text: "" }, { id: "l2", text: "" }, { id: "l3", text: "" }]; b.right = [{ id: "r1", text: "" }, { id: "r2", text: "" }, { id: "r3", text: "" }]; }
     if (ty === "order") b.items = [{ id: "i1", text: "" }, { id: "i2", text: "" }, { id: "i3", text: "" }];
     if (ty === "chrono") b.events = [{ id: "e1", text: "", date: "" }, { id: "e2", text: "", date: "" }, { id: "e3", text: "", date: "" }];
@@ -151,9 +155,36 @@
   function upload(T, accept, kind) {
     return ST.pickFiles(accept).then(function (files) {
       if (!files.length) return null;
-      return ST.readFile(files[0]).then(function (d) {
-        return api("POST", "/api/tests/" + T.id + "/media", { name: d.name, data: d.data, kind: kind }, { timeout: 180000 });
+      return ST.readFile(files[0]).then(shrinkImage).then(function (d) {
+        return api("POST", "/api/tests/" + T.id + "/media", { name: d.name, data: d.data, kind: kind }, { timeout: 180000 }).then(function (m) {
+          var was = d.orig || m.orig_size;
+          if (m.size < was * 0.95) ST.toast(ST.tf("Файл сжат: {0} → {1} КБ", Math.round(was / 1024), Math.round(m.size / 1024)));
+          return m;
+        });
       });
+    });
+  }
+  /* картинки jpg/png шире 1200 px уменьшаем в браузере (JPEG — качество 80 %) до отправки на сервер */
+  var MAXW = 1200;
+  function shrinkImage(d) {
+    var ext = (d.name.split(".").pop() || "").toLowerCase();
+    if (ext !== "jpg" && ext !== "jpeg" && ext !== "png") return d;
+    var mime = ext === "png" ? "image/png" : "image/jpeg";
+    return new Promise(function (ok) {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          if (img.naturalWidth <= MAXW) return ok(d);
+          var k = MAXW / img.naturalWidth, c = document.createElement("canvas");
+          c.width = MAXW; c.height = Math.round(img.naturalHeight * k);
+          c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+          var out = c.toDataURL(mime, 0.8).split(",")[1];
+          var origBytes = Math.round(d.data.length * 3 / 4);
+          ok(out && out.length < d.data.length ? { name: d.name, data: out, orig: origBytes } : d);
+        } catch (e) { ok(d); }
+      };
+      img.onerror = function () { ok(d); };
+      img.src = "data:" + mime + ";base64," + d.data;
     });
   }
   var IMG = ".png,.jpg,.jpeg,.gif,.webp,.svg,.bmp";
@@ -171,6 +202,7 @@
     if (q.type === "chrono") { b.events = orderBy(b.events, a.order).map(function (e) { e.date = (a.dates || {})[e.id] || e.date || ""; return e; }); }
     if (q.type === "single" || q.type === "multi") { a.correct = a.correct || []; a.partial = a.partial || "norms"; }
     if (q.type === "short") { a.fields = a.fields || {}; }
+    if (q.type === "matrix") { a.cells = a.cells || {}; }
     if (q.type === "match") {
       a.pairs = a.pairs || {};
       // пары по строкам: правый элемент строки — пара левого; лишние правые — отдельным списком
@@ -249,12 +281,21 @@
     var part = h("div", { class: "sec" });
     form.appendChild(part);
     var TYPE_UI = {
-      single: optionsUI, multi: optionsUI, short: shortUI, match: matchUI, order: orderUI, chrono: chronoUI,
+      single: optionsUI, multi: optionsUI, short: shortUI, num: numUI, matrix: matrixUI, match: matchUI, order: orderUI, chrono: chronoUI,
       cloze: function () {}, likert: likertUI, essay: essayUI, file: fileUI,
       code: function (box) { A.codeUI(box, b, a, later); }
     };
     TYPE_UI[q.type](part);
 
+    var tagsIn = h("input", { type: "text", placeholder: t("через запятую: дроби, проценты"), style: { width: "100%" } });
+    tagsIn.value = (b.tags || []).join(", ");
+    form.appendChild(A.field(t("Темы вопроса (для отчёта «Динамика класса»)"), tagsIn, "wide"));
+    var qtime = null;
+    if (T.settings.blitz) {
+      qtime = h("input", { type: "number", min: 5, max: 300, style: { width: "90px" }, placeholder: String(T.settings.blitz_seconds || 20) });
+      qtime.value = b.time || "";
+      form.appendChild(A.field(t("Блиц: секунд на этот вопрос (пусто — по умолчанию)"), qtime));
+    }
     // --- баллы, вариант, задание
     var pts = h("input", { type: "number", min: 0, max: 100, step: "0.5", style: { width: "90px" } });
     pts.value = q.points != null ? q.points : 1;
@@ -381,6 +422,45 @@
       row.insertBefore(inp, row.lastChild);
     }
 
+    function matrixUI(box) {
+      b.rows = b.rows || []; b.cols = b.cols || []; a.cells = a.cells || {};
+      var wrap = h("div", { style: { overflowX: "auto" } });
+      function draw() {
+        wrap.innerHTML = "";
+        var head = h("tr", null, h("th", null, t("Строки ↓ / столбцы →")));
+        b.cols.forEach(function (c, j) {
+          var inp = h("input", { type: "text", style: { width: "90px" } }); inp.value = c.text;
+          inp.addEventListener("input", function () { c.text = inp.value; later(); });
+          head.appendChild(h("th", null, inp, h("button", { type: "button", class: "sm ghost danger", disabled: b.cols.length <= 2 || null, onclick: function () {
+            b.cols.splice(j, 1); Object.keys(a.cells).forEach(function (k) { a.cells[k] = (a.cells[k] || []).filter(function (x) { return x !== c.id; }); }); draw(); later(); } }, "✕")));
+        });
+        head.appendChild(h("th", null, h("button", { type: "button", class: "sm", onclick: function () { b.cols.push({ id: nid("c"), text: "" }); draw(); later(); } }, "＋")));
+        var tbl = h("table", { class: "trows" }, head);
+        b.rows.forEach(function (r, i) {
+          var inp = h("input", { type: "text", style: { width: "100%", minWidth: "200px" } }); inp.value = r.text;
+          inp.addEventListener("input", function () { r.text = inp.value; later(); });
+          var tr = h("tr", null, h("td", null, inp));
+          b.cols.forEach(function (c) {
+            var cb = h("input", { type: "checkbox", "aria-label": t("Верно") });
+            cb.checked = (a.cells[r.id] || []).indexOf(c.id) >= 0;
+            cb.addEventListener("change", function () {
+              var cur = (a.cells[r.id] || []).filter(function (x) { return x !== c.id; });
+              if (cb.checked) cur.push(c.id);
+              a.cells[r.id] = cur; later();
+            });
+            tr.appendChild(h("td", { style: { textAlign: "center" } }, cb));
+          });
+          tr.appendChild(h("td", null, h("button", { type: "button", class: "sm ghost danger", disabled: b.rows.length <= 1 || null, onclick: function () { b.rows.splice(i, 1); draw(); later(); } }, "✕")));
+          tbl.appendChild(tr);
+        });
+        wrap.appendChild(tbl);
+      }
+      draw();
+      box.appendChild(h("div", { class: "muted small" }, t("Отметьте галочками верные ячейки. Балл — доля верно заполненных ячеек (включая пустые).")));
+      box.appendChild(wrap);
+      box.appendChild(h("button", { type: "button", class: "sm", onclick: function () { b.rows.push({ id: nid("r"), text: "" }); draw(); later(); } }, "＋ " + t("Строка")));
+      box.appendChild(A.check(t("Частичный балл (если выключено — только вся таблица верно)"), a.partial !== "none", function (v) { a.partial = v ? "cells" : "none"; }));
+    }
     function matchUI(box) {
       box.appendChild(h("b", null, t("Пары: слева — элемент, справа — его пара")));
       var list = h("div", { class: "items" });
@@ -450,6 +530,58 @@
       box.appendChild(sc);
       box.appendChild(h("div", { class: "muted small" }, t("Опрос не оценивается. Ответы видны в анализе вопросов.")));
     }
+    function numUI(box) {
+      b.params = b.params || [];
+      a.tol_abs = a.tol_abs || 0; a.tol_rel = a.tol_rel || 0;
+      var plist = h("div");
+      function drawP() {
+        plist.innerHTML = "";
+        b.params.forEach(function (p, i) {
+          function num(k, w) {
+            var x = h("input", { type: "number", step: "any", style: { width: w || "80px" } });
+            x.value = p[k] != null ? p[k] : "";
+            x.addEventListener("input", function () { p[k] = x.value === "" ? "" : +x.value; });
+            return x;
+          }
+          var nm = h("input", { type: "text", style: { width: "70px" }, placeholder: "s" }); nm.value = p.name || "";
+          nm.addEventListener("input", function () { p.name = nm.value.trim(); });
+          plist.appendChild(h("div", { class: "bar" }, h("b", null, "{"), nm, h("b", null, "}"), " ∈ [", num("min"), " … ", num("max"), "] ",
+            t("шаг"), " ", num("step", "70px"),
+            h("button", { type: "button", class: "sm ghost", onclick: function () { b.params.splice(i, 1); drawP(); } }, "×")));
+        });
+      }
+      drawP();
+      var formula = h("input", { type: "text", placeholder: "s / t", style: { width: "100%" } }); formula.value = a.formula || "";
+      formula.addEventListener("input", function () { a.formula = formula.value; });
+      function numField(k, w) {
+        var x = h("input", { type: "number", min: 0, step: "any", style: { width: w || "90px" } }); x.value = a[k] || 0;
+        x.addEventListener("input", function () { a[k] = +x.value || 0; });
+        return x;
+      }
+      var unit = h("input", { type: "text", style: { width: "90px" }, placeholder: t("м/с") }); unit.value = a.unit || "";
+      unit.addEventListener("input", function () { a.unit = unit.value.trim(); });
+      var sig = numField("sig", "70px"); sig.min = 0; sig.max = 12; sig.step = 1;
+      var ign = h("input", { type: "checkbox" }); ign.checked = !!a.ignore_units;
+      ign.addEventListener("change", function () { a.ignore_units = ign.checked; });
+      var req = h("input", { type: "checkbox" }); req.checked = !!a.require_unit;
+      req.addEventListener("change", function () { a.require_unit = req.checked; });
+      var prev = h("div", { class: "muted small" });
+      box.appendChild(h("div", { class: "muted small" }, t("Параметры подставляются в текст вопроса как {имя}. Без параметров формула — просто число или выражение.")));
+      box.appendChild(plist);
+      box.appendChild(h("button", { type: "button", class: "sm", onclick: function () { b.params.push({ name: "", min: 1, max: 10, step: 1 }); drawP(); } }, "+ " + t("Параметр")));
+      box.appendChild(h("div", { class: "form", style: { marginTop: "10px" } },
+        A.field(t("Формула правильного ответа (+ − * / ^, скобки, sqrt, abs, sin, cos, ln, pi)"), formula, "wide"),
+        A.field(t("Допуск абсолютный (±)"), numField("tol_abs")), A.field(t("Допуск относительный, %"), numField("tol_rel")),
+        A.field(t("Значащих цифр при сравнении (0 — без округления)"), sig),
+        A.field(t("Единицы измерения (подсказка рядом с полем)"), unit),
+        A.field(t("Игнорировать единицы («5 м» = «5»)"), ign), A.field(t("Единицы обязательны в ответе"), req)));
+      var pb = h("button", { type: "button", class: "sm", onclick: function () {
+        api("POST", "/api/num/preview", { params: b.params, formula: a.formula, text: b.text, sig: a.sig }).then(function (r) {
+          prev.textContent = ST.tf("Пример: {0} → ответ {1}", r.text || "", r.value);
+        }).catch(A.err);
+      } }, t("Проверить формулу"));
+      box.appendChild(h("div", { class: "bar" }, pb, prev));
+    }
     function essayUI(box) {
       var mw = h("input", { type: "number", min: 0, style: { width: "90px" } }); mw.value = b.min_words || 0;
       mw.addEventListener("input", function () { b.min_words = +mw.value || 0; });
@@ -457,6 +589,22 @@
       sample.addEventListener("input", function () { a.sample = sample.value; });
       box.appendChild(h("div", { class: "form" }, A.field(t("Минимум слов (подсказка ученику, 0 — нет)"), mw),
         A.field(t("Образец ответа или критерии (видит только учитель)"), sample, "wide")));
+      b.rubric = b.rubric || [];
+      var rl = h("div");
+      function drawR() {
+        rl.innerHTML = "";
+        b.rubric.forEach(function (c, i) {
+          var ti = h("input", { type: "text", placeholder: t("Критерий, например «Аргументация»"), style: { flex: 1, minWidth: "200px" } }); ti.value = c.title || "";
+          ti.addEventListener("input", function () { c.title = ti.value; });
+          var mx = h("input", { type: "number", min: 0.5, step: "0.5", style: { width: "80px" } }); mx.value = c.max || 3;
+          mx.addEventListener("input", function () { c.max = +mx.value || 0; });
+          rl.appendChild(h("div", { class: "bar" }, ti, t("макс."), mx, h("button", { type: "button", class: "sm ghost danger", onclick: function () { b.rubric.splice(i, 1); drawR(); } }, "✕")));
+        });
+      }
+      drawR();
+      box.appendChild(h("div", { class: "sec" }, h("b", null, t("Рубрика (критерии проверки)")),
+        h("div", { class: "muted small" }, t("Учитель оценивает ползунками по критериям — сумма пересчитывается в баллы вопроса автоматически. Нужна и для взаимопроверки.")),
+        rl, h("button", { type: "button", class: "sm", onclick: function () { b.rubric.push({ id: nid("k"), title: "", max: 3 }); drawR(); } }, "＋ " + t("Критерий"))));
     }
     function fileUI(box) {
       var files = h("div", { class: "thumbs" });
@@ -488,6 +636,8 @@
     function build() {
       var body = { text: b.text || "", images: b.images || [] }, ans = {};
       if (b.audio) body.audio = b.audio;
+      if (qtime && +qtime.value) body.time = Math.max(5, +qtime.value);
+      body.tags = tagsIn.value.split(",").map(function (x) { return x.trim(); }).filter(Boolean);
       var ty = q.type;
       function need(c, m) { if (!c) throw new Error(t(m)); }
       if (ty === "single" || ty === "multi") {
@@ -506,6 +656,19 @@
           ans.fields[f.id] = v;
         });
         ans.tol = a.tol || 0;
+      } else if (ty === "num") {
+        body.params = (b.params || []).filter(function (p) { return p.name; }).map(function (p) {
+          return { name: p.name, min: +p.min || 0, max: +p.max || 0, step: +p.step || 1 };
+        });
+        need((a.formula || "").trim(), "Укажите формулу или число правильного ответа");
+        ans = { formula: a.formula.trim(), tol_abs: +a.tol_abs || 0, tol_rel: +a.tol_rel || 0, sig: +a.sig || 0,
+                unit: a.unit || "", ignore_units: !!a.ignore_units, require_unit: !!a.require_unit };
+      } else if (ty === "matrix") {
+        body.rows = b.rows.filter(function (r) { return (r.text || "").trim(); });
+        body.cols = b.cols.filter(function (c) { return (c.text || "").trim(); });
+        need(body.rows.length >= 1 && body.cols.length >= 2, "Нужна хотя бы одна строка и два столбца");
+        ans = { cells: a.cells || {}, partial: a.partial === "none" ? "none" : "cells" };
+        need(Object.keys(ans.cells).some(function (k) { return (ans.cells[k] || []).length; }), "Отметьте хотя бы одну верную ячейку");
       } else if (ty === "match") {
         var rows = b.rows.filter(function (r) { return (r.l.text || "").trim() || (r.r.text || "").trim(); });
         need(rows.length >= 2, "Добавьте хотя бы две пары");
@@ -536,6 +699,7 @@
         need(body.scale.length >= 2, "В шкале нужно хотя бы два значения");
       } else if (ty === "essay") {
         body.min_words = b.min_words || 0; ans.sample = a.sample || "";
+        body.rubric = (b.rubric || []).filter(function (c) { return (c.title || "").trim() && +c.max > 0; }).map(function (c) { return { title: c.title.trim(), max: +c.max }; });
       } else if (ty === "file") {
         body.task_files = b.task_files || []; body.accept = b.accept || ""; body.max_mb = b.max_mb || 10; ans.sample = a.sample || "";
       } else if (ty === "code") {
@@ -549,6 +713,8 @@
       var x = bt.answer, ty = q.type;
       if (ty === "single" || ty === "multi") return { options: x.correct };
       if (ty === "short") { var f = {}; Object.keys(x.fields).forEach(function (k) { f[k] = x.fields[k][0]; }); return { fields: f }; }
+      if (ty === "num") return { value: x.formula, unit: x.unit };
+      if (ty === "matrix") return { cells: x.cells };
       if (ty === "match") return { pairs: x.pairs };
       if (ty === "order") return { order: bt.body.items.map(function (i) { return i.id; }) };
       if (ty === "chrono") {

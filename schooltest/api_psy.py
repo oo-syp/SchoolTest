@@ -20,7 +20,7 @@ def grade_of(class_name):
 
 
 def need_psy(req):
-    need(req.user and (req.user["role"] in ("psychologist", "admin")),
+    need(req.user and auth.has_role(req.user, "psychologist"),
          "Раздел доступен педагогу-психологу и администратору")
 
 

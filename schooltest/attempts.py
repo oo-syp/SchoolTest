@@ -68,6 +68,11 @@ def regrade(attempt_id):
         db().ex("UPDATE attempts SET psy=?, score=NULL, max_score=NULL, percent=NULL, mark=NULL, pending_manual=0 WHERE id=?",
                 (json.dumps(res, ensure_ascii=False), attempt_id))
         return db().one("SELECT * FROM attempts WHERE id=?", (attempt_id,))
+    try:
+        from . import peer as PR
+        ans = PR.blend_manual(snap, attempt_id, ans)       # взаимопроверка: среднее учителя и проверенных оценок учеников
+    except ImportError:
+        pass
     ev, autos, _items = E.score_attempt(snap, plan, ans)
     for qid, pts in autos.items():
         if qid in ans:

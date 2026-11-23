@@ -64,7 +64,7 @@ def api_me(req):
     host = req.headers.get("Host") or ""
     port = host.rsplit(":", 1)[1] if ":" in host else "80"
     urls = ["http://%s:%s" % (ip, port) for ip in local_addresses()]
-    u["role_name"] = auth.ROLES.get(u["role"], u["role"])
+    u["role_name"] = " + ".join([auth.ROLES.get(u["role"], u["role"])] + [auth.ROLES[r] for r in (u.get("roles") or "").split(",") if r in auth.ROLES])
     from .api_years import years_list
     from . import judge as J
     return {"user": u, "urls": urls, "settings": public_settings(), "norms": norms_catalog(), "types": G.TYPE_NAMES,
@@ -183,10 +183,17 @@ def _check_table(v):
 
 
 # ------------------------------------------------------------------ пользователи
+def _clean_roles(value, primary):
+    """Дополнительные роли (учитель + педагог-психолог): список или строка; без основной и без admin."""
+    if isinstance(value, str):
+        value = value.split(",")
+    return ",".join(sorted(set(r for r in (value or []) if r in ("teacher", "psychologist") and r != primary)))
+
+
 @router.route("GET", "/api/users")
 def api_users(req):
     need_admin(req)
-    return db().q("SELECT id, login, full_name, role, active, must_change, last_login, "
+    return db().q("SELECT id, login, full_name, role, roles, active, must_change, last_login, "
                   "(SELECT COUNT(*) FROM tests t WHERE t.owner_id=users.id) AS tests FROM users ORDER BY role, full_name")
 
 
@@ -203,6 +210,8 @@ def api_user_add(req):
     h, s = auth.hash_password(pw)
     uid = db().ex("INSERT INTO users(login,pw_hash,pw_salt,full_name,role,must_change) VALUES(?,?,?,?,?,1)",
                   (login, h, s, (d.get("full_name") or "").strip(), d.get("role") if d.get("role") in auth.ROLES else "teacher"))
+    if d.get("roles") is not None:
+        db().ex("UPDATE users SET roles=? WHERE id=?", (_clean_roles(d.get("roles"), d.get("role")), uid))
     db().audit(req.user, req.ip, "user_add", login)
     return {"id": uid, "password": pw}
 
@@ -210,11 +219,14 @@ def api_user_add(req):
 @router.route("PUT", "/api/users/:uid")
 def api_user_put(req, uid):
     need_admin(req)
-    d = pick(req.json(), ["full_name", "role", "active"])
+    d = pick(req.json(), ["full_name", "role", "roles", "active"])
+    if "roles" in d:
+        d["roles"] = _clean_roles(d["roles"], d.get("role") or db().val("SELECT role FROM users WHERE id=?", (int(uid),)))
     if "role" in d:
         need(d["role"] in auth.ROLES, "Неизвестная роль", 400)
     if int(uid) == req.user["id"]:
         d.pop("role", None)
+        d.pop("roles", None) if req.user["role"] != "admin" else None
         d.pop("active", None)
     if d.get("active") in (0, False) or d.get("role") in ("teacher", "psychologist"):
         others = db().val("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1 AND id<>?", (int(uid),))

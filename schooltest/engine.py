@@ -5,6 +5,7 @@ import json
 import random
 
 from . import grading as G
+from . import mathexpr as MX
 
 DEFAULT_SETTINGS = {
     "shuffle_questions": False,
@@ -13,6 +14,14 @@ DEFAULT_SETTINGS = {
     "free_nav": True,           # можно пропускать вопросы и возвращаться
     "show_result": "mark",      # none | mark | review
     "no_copy": False,
+    "max_attempts": 1,          # 1.5: сколько раз ученик может пройти тест (запуск — один код)
+    "retry_hours": 0,           # повторная попытка не раньше чем через N часов
+    "window": {"from": "", "to": ""},   # доступ только в окне расписания, местное время "YYYY-MM-DDTHH:MM"
+    "peer": {"enabled": False, "count": 2, "weight": 50},   # взаимопроверка: вес оценки одноклассников в итоге, %
+    "doubt": True,              # кнопка «Сомневаюсь» у вопроса
+    "blitz": False,             # 1.5: блиц-опрос (вопросы по таймеру, общий экран)
+    "blitz_seconds": 20,
+    "show_variant": False,      # 1.5: крупно показывать ученику номер варианта
     "track_focus": True,
     "variants": 1,
     "scale": {"mode": "percent"},
@@ -111,6 +120,8 @@ def make_plan(snap, variant, rng=None):
         if q["type"] == "cloze":
             o["choices"] = dict((str(bl["id"]), _perm(bl.get("choices") or [], rng))
                                 for bl in b.get("blanks", []) if bl.get("kind") == "select")
+        if q["type"] == "num" and b.get("params"):
+            o["vars"] = MX.gen_vars(b.get("params"), rng)
         plan.append({"q": q["id"], "t": q["task_num"], "o": o})
     return plan, variant
 
@@ -131,6 +142,9 @@ def public_question(q, entry, plays_used=0, scale=None):
     b = q["body"]
     o = entry.get("o", {})
     out = {"id": q["id"], "type": q["type"], "text": b.get("text", ""), "images": b.get("images") or []}
+    if q["type"] == "num":
+        out["text"] = MX.substitute(out["text"], o.get("vars") or {})
+        out["unit"] = (q.get("answer") or {}).get("unit") or ""
     if scale is not None:
         out["points"] = G.question_points(q, scale)
     audio = b.get("audio")
@@ -145,6 +159,9 @@ def public_question(q, entry, plays_used=0, scale=None):
         out["options"] = [{"id": x["id"], "text": x.get("text", ""), "image": x.get("image")} for x in opts]
     elif t == "short":
         out["fields"] = [{"id": f["id"], "label": f.get("label", "")} for f in (b.get("fields") or [{"id": "1", "label": ""}])]
+    elif t == "matrix":
+        out["rows"] = [{"id": x["id"], "text": x.get("text", "")} for x in b.get("rows", [])]
+        out["cols"] = [{"id": x["id"], "text": x.get("text", "")} for x in b.get("cols", [])]
     elif t == "match":
         out["left"] = [{"id": x["id"], "text": x.get("text", ""), "image": x.get("image")} for x in b.get("left", [])]
         right = _ordered(b.get("right", []), o.get("right") or [])
@@ -212,7 +229,7 @@ def score_attempt(snap, plan, answers):
                 got = 0.0                    # нет ответа — нечего проверять
             autos[e["q"]] = None
         elif scored:
-            res = G.check(q, resp)
+            res = G.check(q, resp, (e.get("o") or {}).get("vars"))
             got = G.award(q, res, maxp, scale)
             if row.get("manual") is not None:  # учитель может исправить балл
                 got = row["manual"]
@@ -235,27 +252,55 @@ def review_question(q, entry, row, scale):
         except ValueError:
             resp = None
     pq["response"] = resp
-    pq["correct"] = correct_view(q)
-    res = G.check(q, resp)
+    vars_ = (entry.get("o") or {}).get("vars")
+    pq["correct"] = correct_view(q, vars_)
+    res = G.check(q, resp, vars_)
     pq["frac"] = None if res is None else res["frac"]
     pq["got"] = (row or {}).get("manual") if G.is_manual(q) else None
     pq["comment"] = (row or {}).get("comment") or ""
     return pq
 
 
-def correct_view(q):
+def correct_view(q, vars_=None):
     a = q["answer"]
     t = q["type"]
     if t in ("single", "multi"):
         return {"options": a.get("correct", [])}
     if t == "short":
         return {"fields": dict((k, (v or [""])[0]) for k, v in (a.get("fields") or {}).items())}
+    if t == "matrix":
+        return {"cells": a.get("cells", {})}
     if t == "match":
         return {"pairs": a.get("pairs", {})}
     if t in ("order", "chrono"):
         return {"order": a.get("order", []), "dates": a.get("dates", {})}
     if t == "cloze":
         return {"blanks": dict((k, (v or [""])[0]) for k, v in (a.get("blanks") or {}).items())}
+    if t == "num":
+        try:
+            v = MX.fmt(MX.expected_value(a, vars_ or {}), a.get("sig"))
+        except MX.FormulaError:
+            v = ""
+        return {"value": v, "unit": a.get("unit") or ""}
     if t in ("essay", "file"):
         return {"sample": a.get("sample", "")}
     return {}
+
+
+def window_state(st, now=None):
+    """('ok'|'early'|'late', from_ts, to_ts) по окну доступа теста."""
+    import time as _t
+    now = now or _t.time()
+    w = st.get("window") or {}
+
+    def ts(v):
+        try:
+            return _t.mktime(_t.strptime(str(v)[:16], "%Y-%m-%dT%H:%M")) if v else None
+        except ValueError:
+            return None
+    a, b = ts(w.get("from")), ts(w.get("to"))
+    if a and now < a:
+        return "early", a, b
+    if b and now > b:
+        return "late", a, b
+    return "ok", a, b

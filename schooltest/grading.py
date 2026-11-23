@@ -18,8 +18,10 @@
 """
 import re
 
-TYPES = ["single", "multi", "short", "match", "order", "chrono", "cloze", "likert", "essay", "file", "code", "psy"]
-AUTO_TYPES = {"single", "multi", "short", "match", "order", "chrono", "cloze", "code"}
+from . import mathexpr as MX
+
+TYPES = ["single", "multi", "short", "match", "order", "chrono", "cloze", "likert", "essay", "file", "code", "psy", "num", "matrix"]
+AUTO_TYPES = {"single", "multi", "short", "match", "order", "chrono", "cloze", "code", "num", "matrix"}
 MANUAL_TYPES = {"essay", "file"}
 UNSCORED_TYPES = {"likert", "psy"}
 PAPER_UNSUPPORTED = {"file", "code", "psy"}   # и вопросы со звуком
@@ -30,7 +32,7 @@ def is_manual(q):
     return q["type"] in MANUAL_TYPES or (q["type"] == "code" and bool((q.get("answer") or {}).get("manual")))
 
 TYPE_NAMES = {
-    "single": "Один верный ответ", "multi": "Несколько верных ответов", "short": "Короткий ответ",
+    "num": "Числовой ответ", "matrix": "Матрица (таблица да/нет)", "single": "Один верный ответ", "multi": "Несколько верных ответов", "short": "Короткий ответ", "num": "Числовой ответ",
     "match": "Соответствие", "order": "Порядок", "chrono": "Хронологическая рулетка",
     "cloze": "Пропуски в тексте", "likert": "Шкала Ликерта (опрос)", "essay": "Развёрнутый ответ",
     "file": "Практическое задание с файлом", "code": "Код (программирование)",
@@ -129,7 +131,7 @@ def same_answer(given, accepted, tol=0.0):
 
 # ---------------------------------------------------------------- проверка одного вопроса
 
-def check(q, response):
+def check(q, response, vars=None):
     """Возвращает {"frac": 0..1, "errors": n, "parts": m} или None (не проверяется автоматически).
     frac — доля верного; errors — число ошибок (для правил частичного балла по нормам);
     parts — из скольких элементов состоит ответ."""
@@ -146,6 +148,13 @@ def check(q, response):
         f = r.get("judged") if isinstance(r, dict) else None
         f = max(0.0, min(1.0, float(f or 0)))
         return {"frac": f, "errors": 0 if f >= 1 else 1, "parts": 1}
+    if t == "num":
+        try:
+            exp = MX.expected_value(a, vars or {})
+        except MX.FormulaError:
+            return {"frac": 0.0, "errors": 1, "parts": 1}
+        ok = MX.check_numeric(r.get("value"), exp, a)
+        return {"frac": 1.0 if ok else 0.0, "errors": 0 if ok else 1, "parts": 1}
     if t == "single":
         ok = r.get("choice") is not None and str(r.get("choice")) in [str(x) for x in a.get("correct", [])]
         return {"frac": 1.0 if ok else 0.0, "errors": 0 if ok else 1, "parts": 1}
@@ -172,6 +181,21 @@ def check(q, response):
         good = sum(1 for f in fields if same_answer(given.get(str(f["id"])), acc.get(str(f["id"])), a.get("tol", 0)))
         n = len(fields)
         return {"frac": good / float(n), "errors": n - good, "parts": n}
+    if t == "matrix":
+        want = a.get("cells") or {}
+        given = r.get("cells") or {}
+        rows = list(want.keys())
+        cols = a.get("cols") or sorted(set(c for v in want.values() for c in v))
+        n = max(1, len(rows) * len(cols))
+        good = 0
+        for row in rows:
+            w, g = set(str(x) for x in want.get(row) or []), set(str(x) for x in given.get(row) or [])
+            for c in cols:
+                good += 1 if ((str(c) in w) == (str(c) in g)) else 0
+        frac = good / float(n)
+        if a.get("partial") == "none" and good < n:
+            frac = 0.0
+        return {"frac": frac, "errors": n - good, "parts": n}
     if t == "match":
         pairs = a.get("pairs") or {}
         given = r.get("pairs") or {}
@@ -218,8 +242,12 @@ def is_answered(q, response):
         return r.get("choice") not in (None, "")
     if t == "multi":
         return bool(r.get("choices"))
+    if t == "num":
+        return bool(str(r.get("value") or "").strip())
     if t == "short":
         return any(str(v).strip() for v in (r.get("fields") or {}).values())
+    if t == "matrix":
+        return any(v for v in (r.get("cells") or {}).values())
     if t == "match":
         return any(v not in (None, "") for v in (r.get("pairs") or {}).values())
     if t in ("order", "chrono"):

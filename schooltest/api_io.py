@@ -45,10 +45,110 @@ def _safe_name(s):
     return s[:60] or "test"
 
 
+_MATH = re.compile(r"(\\\(.+?\\\)|\\\[.+?\\\]|\$\$.+?\$\$|\$[^$\n]+?\$)", re.S)
+_TEX_ESC = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "#": r"\#", "_": r"\_", "{": r"\{", "}": r"\}",
+            "~": r"\textasciitilde{}", "^": r"\textasciicircum{}", "$": r"\$"}
+
+
+def _tex_text(s):
+    """Текст вопроса в LaTeX: формулы \\( … \\) и $ … $ остаются как есть, остальное экранируется."""
+    out = []
+    for i, part in enumerate(_MATH.split(s or "")):
+        out.append(part if i % 2 else "".join(_TEX_ESC.get(ch, ch) for ch in part))
+    return "".join(out).replace("\n", "\\\\\n")
+
+
+def _md_text(s):
+    s = re.sub(r"\\\((.+?)\\\)", r"$\1$", s or "", flags=re.S)
+    return re.sub(r"\\\[(.+?)\\\]", r"$$\1$$", s, flags=re.S)
+
+
+def export_doc(test_id, fmt):
+    """Тест → Markdown или LaTeX: условия + ключ ответов (для печати и публикации)."""
+    from . import engine as E
+    snap = E.build_snapshot(db(), test_id)
+    tex = fmt == "tex"
+    T = _tex_text if tex else _md_text
+    title = snap["test"]["title"]
+    lines, key = [], []
+    if tex:
+        lines += [r"\documentclass[12pt,a4paper]{article}", r"\usepackage[T2A]{fontenc}", r"\usepackage[utf8]{inputenc}",
+                  r"\usepackage[russian,english]{babel}", r"\usepackage{amsmath,amssymb,enumitem,array}", r"\usepackage[margin=2cm]{geometry}",
+                  r"\begin{document}", r"\section*{%s}" % _tex_text(title)]
+        if snap["test"].get("subject"):
+            lines.append(r"\textit{%s}\par\medskip" % _tex_text(snap["test"]["subject"]))
+    else:
+        lines += ["# " + title, ""]
+        if snap["test"].get("subject"):
+            lines += ["*" + snap["test"]["subject"] + "*", ""]
+    sym = lambda ok: ("$\\blacksquare$" if ok else "$\\square$") if tex else ("[x]" if ok else "[ ]")   # noqa: E731
+
+    def opts(items, correct, num=False):
+        out = []
+        for j, o in enumerate(items):
+            mark = sym(str(o["id"]) in correct)
+            if tex:
+                out.append(r"\item %s" % T(o.get("text", "")))
+            else:
+                out.append("%s %s %s" % ("-", "(%s)" % chr(1072 + j) if num else "", T(o.get("text", ""))))
+        return out
+    for n, q in enumerate(snap["questions"], 1):
+        b, a, ty = q["body"], q["answer"], q["type"]
+        head = T(b.get("text", ""))
+        ans = ""
+        body = []
+        if ty in ("single", "multi"):
+            cor = [str(x) for x in a.get("correct", [])]
+            body = (([r"\begin{enumerate}[label=\alph*)]"] + opts(b["options"], cor) + [r"\end{enumerate}"]) if tex else
+                    [("%s. %s" % (chr(1072 + j), T(o.get("text", ""))) + "  ") for j, o in enumerate(b["options"])])
+            ans = ", ".join(chr(1072 + j) for j, o in enumerate(b["options"]) if str(o["id"]) in cor)
+        elif ty == "short":
+            ans = "; ".join((v or [""])[0] for v in (a.get("fields") or {}).values())
+        elif ty == "num":
+            ans = "%s %s" % (a.get("formula", ""), a.get("unit", ""))
+        elif ty == "match":
+            lt = dict((x["id"], x.get("text", "")) for x in b.get("left", []))
+            rt = dict((x["id"], x.get("text", "")) for x in b.get("right", []))
+            body = ["%s — ______" % T(x.get("text", "")) + ("\\\\" if tex else "  ") for x in b.get("left", [])]
+            ans = "; ".join("%s — %s" % (lt.get(k, ""), rt.get(v, "")) for k, v in (a.get("pairs") or {}).items())
+        elif ty == "matrix":
+            rt = dict((x["id"], x.get("text", "")) for x in b.get("rows", []))
+            ct = dict((x["id"], x.get("text", "")) for x in b.get("cols", []))
+            body = ["%s: %s" % (T(x.get("text", "")), " / ".join(T(c.get("text", "")) for c in b.get("cols", []))) + ("\\\\" if tex else "  ")
+                    for x in b.get("rows", [])]
+            ans = "; ".join("%s: %s" % (rt.get(k, ""), ", ".join(ct.get(c, "") for c in v)) for k, v in (a.get("cells") or {}).items())
+        elif ty in ("order", "chrono"):
+            items = b.get("items" if ty == "order" else "events", [])
+            by = dict((x["id"], x.get("text", "")) for x in items)
+            body = ["%d) %s" % (j + 1, T(x.get("text", ""))) + ("\\\\" if tex else "  ") for j, x in enumerate(items)]
+            ans = " → ".join(by.get(i, "") for i in a.get("order", []))
+        elif ty == "cloze":
+            ans = "; ".join((v or [""])[0] for v in (a.get("blanks") or {}).values())
+        elif ty == "essay":
+            ans = a.get("sample", "")[:200]
+        if tex:
+            lines.append(r"\noindent\textbf{%d.} %s\par" % (n, head))
+            lines += body
+            lines.append(r"\medskip")
+            key.append(r"\textbf{%d.} %s\\" % (n, _tex_text(ans)))
+        else:
+            lines += ["**%d.** %s" % (n, head), ""] + body + [""]
+            key.append("%d. %s" % (n, _md_text(ans)))
+    if tex:
+        lines += [r"\clearpage", r"\section*{Ключ}"] + key + [r"\end{document}"]
+    else:
+        lines += ["---", "", "## Ключ", ""] + ["- " + k for k in key]
+    return "\n".join(lines) + "\n"
+
+
 @router.route("GET", "/api/tests/:tid/export")
 def api_test_export(req, tid):
     t = get_test(tid, req)
     fmt = req.arg("format") or "stest"
+    if fmt in ("md", "tex"):
+        body = export_doc(t["id"], fmt)
+        return FileResponse(body.encode("utf-8"), _safe_name(t["title"]) + "." + fmt,
+                            "text/markdown; charset=utf-8" if fmt == "md" else "application/x-tex; charset=utf-8")
     if fmt == "txt":
         return FileResponse(export_text(t["id"]).encode("utf-8-sig"), _safe_name(t["title"]) + ".txt",
                             "text/plain; charset=utf-8")

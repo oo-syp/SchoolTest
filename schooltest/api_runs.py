@@ -19,7 +19,7 @@ def get_run(rid, req):
     r = db().one("SELECT * FROM runs WHERE id=?", (int(rid),))
     need(r, "Не найдено", 404)
     if r.get("kind") == "psy":       # психологическая служба: все психологи и администратор, учителя — нет
-        need(is_admin(req) or req.user["role"] == "psychologist", "Результаты психодиагностики доступны только педагогу-психологу")
+        need(is_admin(req) or auth.has_role(req.user, "psychologist"), "Результаты психодиагностики доступны только педагогу-психологу")
         return r
     need(r["teacher_id"] == req.user["id"] or is_admin(req))
     return r
@@ -34,6 +34,15 @@ def api_run_start(req):
     mode = "paper" if d.get("mode") == "paper" else "online"
     snap = E.build_snapshot(db(), t["id"], default_scale())
     need(snap["questions"], "В тесте нет вопросов", 400)
+    if snap["test"]["settings"].get("blitz"):
+        need(mode == "online", "Блиц-опрос проводится только онлайн", 400)
+        need(any(q["type"] in ("single", "multi", "short", "num") for q in snap["questions"]),
+             "В блице нужны вопросы с одним/несколькими ответами, короткие или числовые", 400)
+        st = snap["test"]["settings"]       # у всех один порядок вопросов и вариантов — иначе общий экран не имеет смысла
+        st.update({"shuffle_questions": False, "shuffle_options": False, "variants": 1, "free_nav": False, "time_limit": 0})
+        for tk in snap["tasks"]:
+            tk["pick"] = 0
+        snap["questions"] = [q for q in snap["questions"] if q["variant"] in (0, 1)]
     code = auth.new_code(db()) if mode == "online" else None
     rid = db().insert("runs", {"test_id": t["id"], "class_id": cls["id"], "teacher_id": req.user["id"],
                                "title": t["title"], "mode": mode, "code": code, "status": "open",
@@ -44,6 +53,7 @@ def api_run_start(req):
 
 def _run_out(r):
     r = dict(r)
+    r["peer"] = '"peer": {"enabled": true' in (r.get("snapshot") or "")
     r.pop("snapshot", None)
     r["class_name"] = db().val("SELECT name FROM classes WHERE id=?", (r["class_id"],)) or ""
     r["teacher"] = db().val("SELECT full_name FROM users WHERE id=?", (r["teacher_id"],)) or ""
@@ -55,12 +65,12 @@ def _run_out(r):
 @router.route("GET", "/api/runs")
 def api_runs(req):
     sql, args = "SELECT * FROM runs WHERE 1=1", []
-    psy_all = req.arg("kind") == "psy" and req.user["role"] == "psychologist"
+    psy_all = req.arg("kind") == "psy" and auth.has_role(req.user, "psychologist")
     if (not is_admin(req) and not psy_all) or req.arg("mine") == "1":
         sql += " AND teacher_id=?"
         args.append(req.user["id"])
     if req.arg("kind") == "psy":
-        need(is_admin(req) or req.user["role"] == "psychologist", "Раздел доступен педагогу-психологу")
+        need(is_admin(req) or auth.has_role(req.user, "psychologist"), "Раздел доступен педагогу-психологу")
     sql += " AND kind=?"
     args.append("psy" if req.arg("kind") == "psy" else "test")
     if req.arg("year_id") and req.arg("year_id") != "all":
@@ -221,7 +231,8 @@ def api_attempt(req, aid):
         items.append({"index": i, "question": q, "order": e.get("o", {}), "task_num": e["t"], "response": _resp(row),
                       "auto": row["auto"] if row else None, "manual": row["manual"] if row else None,
                       "comment": row["comment"] if row else "", "maxp": G.question_points(q, scale),
-                      "manual_type": G.is_manual(q), "files": files})
+                      "manual_type": G.is_manual(q), "files": files,
+                      "num": (E.review_question(q, e, row, scale) if q["type"] == "num" else None)})
     out = dict(a)
     out["plan"] = None
     out["focus_log"] = json.loads(a["focus_log"] or "[]")
@@ -249,9 +260,13 @@ def api_attempt_grade(req, aid):
     else:
         pts = float(str(pts).replace(",", "."))
         need(0 <= pts <= maxp, "Баллы — от 0 до %s" % G.round_half_up(maxp) if maxp == int(maxp) else maxp, 400)
-    db().ex("INSERT INTO answers(attempt_id,qid,manual,comment,updated_at) VALUES(?,?,?,?,?) "
-            "ON CONFLICT(attempt_id,qid) DO UPDATE SET manual=excluded.manual, comment=excluded.comment",
-            (a["id"], qid, pts, (d.get("comment") or "")[:2000], time.time()))
+    rub = None
+    if isinstance(d.get("rubric"), dict) and q["body"].get("rubric"):
+        mx = dict((c["id"], c["max"]) for c in q["body"]["rubric"])
+        rub = json.dumps(dict((k, max(0.0, min(float(v), mx[k]))) for k, v in d["rubric"].items() if k in mx and v not in (None, "")))
+    db().ex("INSERT INTO answers(attempt_id,qid,manual,comment,rubric,updated_at) VALUES(?,?,?,?,?,?) "
+            "ON CONFLICT(attempt_id,qid) DO UPDATE SET manual=excluded.manual, comment=excluded.comment, rubric=excluded.rubric",
+            (a["id"], qid, pts, (d.get("comment") or "")[:2000], rub, time.time()))
     a = A.regrade(a["id"])
     return {"score": a["score"], "max_score": a["max_score"], "percent": a["percent"], "mark": a["mark"],
             "pending": bool(a["pending_manual"])}
@@ -298,6 +313,7 @@ def api_run_check(req, rid):
                            (a["id"], e["q"]))
             out.append({"attempt_id": a["id"], "student": a["student_name"], "qid": e["q"], "question": q,
                         "response": resp, "manual": row["manual"] if row else None, "comment": row["comment"] if row else "",
+                        "rubric": json.loads(row["rubric"]) if row and row.get("rubric") else None,
                         "maxp": G.question_points(q, scale), "files": files})
     return out
 
@@ -398,6 +414,10 @@ def _short_resp(q, resp):
         key = "items" if t == "order" else "events"
         texts = dict((o["id"], o.get("text") or "?") for o in b.get(key, []))
         return " → ".join(texts.get(i, "?") for i in resp.get("order") or [])
+    if t == "matrix":
+        rt = dict((o["id"], o.get("text") or "?") for o in b.get("rows", []))
+        ct = dict((o["id"], o.get("text") or "?") for o in b.get("cols", []))
+        return "; ".join("%s: %s" % (rt.get(k, "?"), ", ".join(ct.get(c, "?") for c in v) or "—") for k, v in (resp.get("cells") or {}).items())
     if t == "match":
         lt = dict((o["id"], o.get("text") or "?") for o in b.get("left", []))
         rt = dict((o["id"], o.get("text") or "?") for o in b.get("right", []))
@@ -530,7 +550,7 @@ def api_run_paper(req, rid):
                     excluded.append({"id": q["id"], "text": _plain(q["body"].get("text", ""))[:100], "type": G.TYPE_NAMES[q["type"]]})
                 continue
             pq = E.public_question(q, e, scale=st["scale"])
-            items.append({"q": pq, "key": E.correct_view(q), "answer": q["answer"], "task_num": e["t"]})
+            items.append({"q": pq, "key": E.correct_view(q, (e.get("o") or {}).get("vars")), "answer": q["answer"], "task_num": e["t"]})
         out.append({"copy": k + 1, "variant": variant, "items": items})
     return {"title": snap["test"]["title"], "subject": snap["test"].get("subject") or "",
             "class": db().val("SELECT name FROM classes WHERE id=?", (r["class_id"],)) or "",
@@ -564,3 +584,57 @@ def api_run_paper_marks(req, rid):
                                          "finished_at": time.time()})
             n += 1
     return {"saved": n}
+
+
+@router.route("POST", "/api/num/preview")
+def api_num_preview(req):
+    """Проверка формулы числового вопроса: случайные значения параметров → текст и ответ."""
+    d = req.json() or {}
+    from . import mathexpr as MX
+    vars_ = MX.gen_vars(d.get("params") or [])
+    try:
+        v = MX.evaluate(d.get("formula"), vars_)
+    except MX.FormulaError as e:
+        raise ApiError(400, str(e))
+    return {"vars": vars_, "text": MX.substitute(d.get("text") or "", vars_), "value": MX.fmt(v, d.get("sig"))}
+
+
+@router.route("GET", "/api/runs/:rid/doubts")
+def api_run_doubts(req, rid):
+    """Где класс сомневался (даже если ответил верно) — отметки «Сомневаюсь» учеников."""
+    r = get_run(rid, req)
+    snap = A.snapshot_for(r["id"])
+    scale = snap["test"]["settings"]["scale"]
+    qs = snap["questions"]
+    atts = db().q("SELECT id, student_name FROM attempts WHERE run_id=? AND status='finished' AND paper=0", (r["id"],))
+    stat = dict((q["id"], {"n": 0, "doubt": 0, "doubt_ok": 0, "names": []}) for q in qs)
+    for a in atts:
+        for row in db().q("SELECT qid, response, auto, manual FROM answers WHERE attempt_id=?", (a["id"],)):
+            q, st = None, stat.get(row["qid"])
+            if st is None:
+                continue
+            q = next(x for x in qs if x["id"] == row["qid"])
+            st["n"] += 1
+            try:
+                resp = json.loads(row["response"] or "null")
+            except ValueError:
+                resp = None
+            if isinstance(resp, dict) and resp.get("doubt"):
+                st["doubt"] += 1
+                got = row["manual"] if row["manual"] is not None else row["auto"]
+                mx = G.question_points(q, scale)
+                if got is not None and mx and got >= mx:
+                    st["doubt_ok"] += 1
+                st["names"].append(a["student_name"])
+    rows = []
+    for i, q in enumerate(qs, 1):
+        st = stat[q["id"]]
+        if st["doubt"]:
+            txt = (q["body"].get("text") or "")[:90]
+            rows.append([i, txt, st["n"], st["doubt"], "%d %%" % round(100.0 * st["doubt"] / max(1, st["n"])), st["doubt_ok"],
+                         ", ".join(st["names"][:8]) + (" …" if len(st["names"]) > 8 else "")])
+    rows.sort(key=lambda x: -x[3])
+    return {"name": "Сомнения", "title": "Сомнения учеников — «%s»" % snap["test"]["title"],
+            "subtitle": "Вопросы, у которых ученики ставили отметку «Сомневаюсь». Графа «верно, но сомневались» — темы, где знание есть, а уверенности нет.",
+            "headers": ["№", "Вопрос", "Ответили", "Сомневались", "Доля", "Верно, но сомневались", "Кто"],
+            "widths": [5, 50, 10, 12, 8, 18, 40], "rows": rows}

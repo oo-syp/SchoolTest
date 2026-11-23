@@ -226,6 +226,11 @@ def normalize_question(qtype, body, answer):
     чтобы по ним нельзя было угадать правильный ответ. Возвращает (body, answer, предупреждения)."""
     need(qtype in G.TYPES, "Неизвестный тип вопроса", 400)
     b = {"text": _txt(body.get("text"), 20000), "images": [int(x) for x in body.get("images") or [] if str(x).isdigit()]}
+    tags = [_txt(x, 40) for x in (body.get("tags") or []) if _txt(x, 40)][:6]
+    if tags:
+        b["tags"] = tags                 # темы вопроса: нужны отчёту «Динамика класса»
+    if body.get("time"):
+        b["time"] = max(1, min(600, int(body["time"])))     # блиц: секунд на вопрос
     au = body.get("audio") or {}
     if au.get("media"):
         b["audio"] = {"media": int(au["media"]), "plays": max(0, int(au.get("plays") or 0))}
@@ -265,6 +270,41 @@ def normalize_question(qtype, body, answer):
             acc[nid] = vals
         a["fields"] = acc
         a["tol"] = float(answer.get("tol") or 0)
+    elif qtype == "matrix":
+        b["rows"], rmap = items(body.get("rows"))
+        b["cols"], cmap = items(body.get("cols"))
+        need(len(b["rows"]) >= 1 and len(b["cols"]) >= 2, "Нужна хотя бы одна строка и два столбца", 400)
+        a["cols"] = [c["id"] for c in b["cols"]]
+        a["cells"] = dict((rmap[str(k)], [cmap[str(c)] for c in v if str(c) in cmap])
+                          for k, v in (answer.get("cells") or {}).items() if str(k) in rmap)
+        for r_ in b["rows"]:
+            a["cells"].setdefault(r_["id"], [])
+        a["partial"] = "none" if answer.get("partial") == "none" else "cells"
+        need(any(a["cells"].values()), "Отметьте хотя бы одну верную ячейку", 400)
+    elif qtype == "num":
+        from . import mathexpr as MX
+        b["params"] = []
+        for p_ in (body.get("params") or [])[:8]:
+            nm = _txt(p_.get("name"), 20)
+            need(MX._NAME.match(nm), "Имя параметра: буквы и цифры, начинается с буквы", 400)
+            try:
+                lo, hi, st_ = float(p_.get("min")), float(p_.get("max")), float(p_.get("step") or 1)
+            except (TypeError, ValueError):
+                raise ApiError(400, "Параметр «%s»: проверьте числа" % nm)
+            need(st_ > 0 and hi >= lo, "Параметр «%s»: диапазон или шаг заданы неверно" % nm, 400)
+            b["params"].append({"name": nm, "min": lo, "max": hi, "step": st_})
+        a["formula"] = _txt(answer.get("formula"), 300)
+        need(a["formula"], "Укажите формулу или число правильного ответа", 400)
+        try:
+            MX.evaluate(a["formula"], MX.gen_vars(b["params"]))
+        except MX.FormulaError as e:
+            raise ApiError(400, str(e))
+        for k in ("tol_abs", "tol_rel"):
+            a[k] = max(0.0, float(answer.get(k) or 0))
+        a["sig"] = max(0, min(12, int(answer.get("sig") or 0)))
+        a["unit"] = _txt(answer.get("unit"), 30)
+        a["ignore_units"] = bool(answer.get("ignore_units"))
+        a["require_unit"] = bool(answer.get("require_unit"))
     elif qtype == "match":
         b["left"], lmap = items(body.get("left"))
         b["right"], rmap = items(body.get("right"))
@@ -322,6 +362,17 @@ def normalize_question(qtype, body, answer):
         need(b["statements"], "Добавьте хотя бы одно утверждение", 400)
     elif qtype == "essay":
         b["min_words"] = max(0, int(body.get("min_words") or 0))
+        rub = []
+        for c in (body.get("rubric") or [])[:12]:
+            title = _txt(c.get("title"), 120)
+            try:
+                mx = float(c.get("max") or 0)
+            except (TypeError, ValueError):
+                mx = 0
+            if title and mx > 0:
+                rub.append({"id": _rid(), "title": title, "max": min(mx, 100), "hint": _txt(c.get("hint"), 300)})
+        if rub:
+            b["rubric"] = rub
         a["sample"] = _txt(answer.get("sample"), 20000)
     elif qtype == "file":
         b["task_files"] = [int(x) for x in body.get("task_files") or [] if str(x).isdigit()]
@@ -519,6 +570,8 @@ def store_media(tid, name, data, kind=None):
         import mimetypes
         mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
     need(len(data) <= MEDIA_LIMITS[kind] * 1024 * 1024, "Файл слишком большой (не более %d МБ)" % MEDIA_LIMITS[kind], 400)
+    from . import mediafix
+    data, _how = mediafix.optimize(name, kind, data)
     sha = hashlib.sha1(data).hexdigest()
     same = db().val("SELECT id FROM media WHERE test_id=? AND sha1=? AND kind=?", (tid, sha, kind))
     if same:
@@ -532,8 +585,10 @@ def api_media_add(req, tid):
     t = get_test(tid, req, write=True)
     d = req.json()
     kind = d.get("kind") if d.get("kind") in MEDIA_LIMITS else None
-    mid = store_media(t["id"], (d.get("name") or "file").strip(), b64data(d), kind)
+    raw = b64data(d)
+    mid = store_media(t["id"], (d.get("name") or "file").strip(), raw, kind)
     m = db().one("SELECT id, kind, name, mime, size FROM media WHERE id=?", (mid,))
+    m["orig_size"] = len(raw)
     return m
 
 

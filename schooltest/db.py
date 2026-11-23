@@ -6,7 +6,7 @@ import sqlite3
 import threading
 import time
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -205,6 +205,21 @@ CREATE TABLE IF NOT EXISTS folders (
 );
 CREATE INDEX IF NOT EXISTS ix_folders_parent ON folders(parent_id);
 
+-- Взаимопроверка (1.5): ученик анонимно оценивает работу одноклассника по рубрике учителя
+CREATE TABLE IF NOT EXISTS peer_reviews (
+    id INTEGER PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    qid TEXT NOT NULL,
+    author_id INTEGER NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
+    reviewer_id INTEGER NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
+    scores TEXT,
+    frac REAL,
+    created_at REAL,
+    done_at REAL,
+    UNIQUE(qid, author_id, reviewer_id)
+);
+CREATE INDEX IF NOT EXISTS ix_peer_run ON peer_reviews(run_id, qid);
+
 -- Избранное (1.3): закрепление тестов и методик психодиагностики, своё у каждого пользователя
 CREATE TABLE IF NOT EXISTS favorites (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -311,7 +326,9 @@ class Database(object):
                ("attempts", "extra", "TEXT NOT NULL DEFAULT '{}'"),
                ("tests", "folder_id", "INTEGER REFERENCES folders(id) ON DELETE SET NULL"),
                ("attempts", "cheat_flags", "TEXT NOT NULL DEFAULT '[]'"),
-               ("attempts", "cheat_status", "TEXT NOT NULL DEFAULT 'ok'")]  # ok | suspect | blocked
+               ("attempts", "cheat_status", "TEXT NOT NULL DEFAULT 'ok'"),
+               ("users", "roles", "TEXT NOT NULL DEFAULT ''"),
+               ("answers", "rubric", "TEXT")]   # 1.5: дополнительные роли через запятую  # ok | suspect | blocked
         for table, col, decl in add:
             if col not in self._cols(table):
                 self.conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, col, decl))

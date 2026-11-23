@@ -52,6 +52,9 @@ def addresses(port=None, https=None):
 
 
 def public_get(h, path, query):
+    if path.startswith("/blitz/"):
+        from . import blitz
+        return blitz.public_get(h, path, query)
     """Публичная страница: /ca.cer (DER) и /ca.crt (PEM) — корневой сертификат школы."""
     store = cert_store()
     data = store.ca_der() if path.endswith("cer") else (store.ca_pem() or "").encode()

@@ -90,10 +90,25 @@ def s_start(req):
     sid = d.get("student_id")
     stu = db().one("SELECT * FROM students WHERE id=? AND class_id=? AND active=1", (int(sid or 0), run["class_id"])) if sid else None
     need(stu, "Выберите себя в списке", 400)
+    st_ = A.snapshot_for(run["id"])["test"]["settings"]
     with db().tx():
         a = db().one("SELECT * FROM attempts WHERE run_id=? AND student_id=? ORDER BY num DESC LIMIT 1", (run["id"], stu["id"]))
+        if not (a and a["status"] == "active"):       # окно доступа действует на начало попытки
+            ws, w_from, w_to = E.window_state(st_)
+            fmt = lambda x: time.strftime("%d.%m.%Y %H:%M", time.localtime(x))   # noqa: E731
+            need(ws != "early", "Тест откроется %s" % (w_from and fmt(w_from)), 403)
+            need(ws != "late", "Время доступа к тесту закончилось (%s)" % (w_to and fmt(w_to)), 403)
         if a and a["status"] == "finished":
-            raise ApiError(409, "Вы уже прошли этот тест. Повторно пройти его можно только с разрешения учителя", )
+            maxa = max(1, int(st_.get("max_attempts") or 1))
+            if a["num"] >= maxa:
+                raise ApiError(409, "Вы уже прошли этот тест. Повторно пройти его можно только с разрешения учителя", )
+            wait = float(st_.get("retry_hours") or 0) * 3600 - (time.time() - (a["finished_at"] or 0))
+            if wait > 0:
+                raise ApiError(409, "Следующая попытка будет доступна через %d мин." % (int(wait // 60) + 1))
+            aid = db().insert("attempts", {"run_id": run["id"], "student_id": stu["id"], "student_name": fio(stu),
+                                           "num": a["num"] + 1, "status": "active", "device": dev})
+            db().update("attempts", aid, _new_plan(run, aid))
+            return {"attempt_id": aid}, extra
         if a and a["status"] == "active":
             if a["device"] == dev:
                 aid = a["id"]
@@ -156,7 +171,8 @@ def _state(a):
     out = {"attempt_id": a["id"], "status": a["status"], "title": snap["test"]["title"], "student": a["student_name"],
            "total": len(plan), "cur": a["cur"], "free_nav": bool(st.get("free_nav", True)),
            "no_copy": bool(st.get("no_copy")), "track_focus": bool(st.get("track_focus", True)),
-           "cheat_status": a["cheat_status"],
+           "cheat_status": a["cheat_status"], "blitz": bool(st.get("blitz")), "peer": bool((st.get("peer") or {}).get("enabled")) and any(q["type"] == "essay" and q["body"].get("rubric") for q in snap["questions"]), "doubt": bool(st.get("doubt", True)),
+           "variant": a["variant"] if st.get("show_variant") else None,
            "time_left": max(0, int(a["deadline"] - time.time())) if a["deadline"] and a["status"] == "active" else None}
     sec_cur, sec_left = 0, None
     if snap.get("psy"):

@@ -85,5 +85,5 @@ def load_modules():
     from . import api_admin, api_classes, api_tests, api_runs, api_student, api_io, sgbridge  # noqa: F401
     from . import api_years, api_code, api_psy  # noqa: F401
     from . import api_folders, api_favorites, api_bank, api_surveys  # noqa: F401
-    from . import api_net  # noqa: F401
+    from . import api_net, blitz, api_dynamics, peer  # noqa: F401
     api_net.install(APP["app"])
