@@ -35,7 +35,7 @@ class Client(object):
             status, payload = r.status, r.read()
         except urllib.error.HTTPError as e:
             status, payload = e.code, e.read()
-        if status != expect:
+        if expect is not None and status != expect:
             raise AssertionError("%s %s -> %s %s" % (method, path, status, payload[:300].decode("utf-8", "replace")))
         if raw:
             return payload

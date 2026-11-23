@@ -9,7 +9,7 @@ a = Analysis(
     pathex=['.'],
     binaries=[],
     datas=[('schooltest/static', 'static')],
-    hiddenimports=['schooltest.api_admin','schooltest.api_classes','schooltest.api_tests','schooltest.api_runs','schooltest.api_student','schooltest.api_io','schooltest.sgbridge','schooltest.api_years','schooltest.api_code','schooltest.api_psy','schooltest.judge','schooltest.psy','schooltest.psy_more','schooltest.psy_socio','schooltest.psy_shtur','schooltest.shtur_data','schooltest.api_net','schooltest.cert','schooltest.winservice',
+    hiddenimports=['schooltest.api_admin','schooltest.api_classes','schooltest.api_tests','schooltest.api_runs','schooltest.api_student','schooltest.api_io','schooltest.sgbridge','schooltest.api_years','schooltest.api_code','schooltest.api_psy','schooltest.judge','schooltest.psy','schooltest.psy_more','schooltest.psy_socio','schooltest.psy_shtur','schooltest.shtur_data','schooltest.api_net','schooltest.blitz','schooltest.api_dynamics','schooltest.peer','schooltest.mediafix','schooltest.mathexpr','schooltest.cert','schooltest.winservice',
                    # модули для решений учеников на встроенном Python
                    'math','cmath','decimal','fractions','random','statistics','itertools','functools','operator','collections','heapq',
                    'bisect','array','string','re','datetime','calendar','copy','queue','typing','dataclasses','enum','textwrap','time'],
